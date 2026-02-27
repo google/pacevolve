@@ -15,6 +15,7 @@
 import dataclasses
 import re
 import os
+import ast
 from task_utils import CompletedProcess, _call_shell_command
 import logging
 
@@ -125,42 +126,66 @@ def parse_eval_results(
   eval_results: list[str] | str,
 ) -> list[float] | float:
   if isinstance(eval_results, str):
-    # Updated pattern to capture the closing brace of the dictionary
-    pattern = r"Candidate:\s*({.+?})\s*"
-
-    # re.search() scans the string for the first location where the pattern produces a match
-    match = re.search(pattern, eval_results)
-
-    if match:
-        # match.group(1) is the text captured by the first set of parentheses ( )
-        captured_value_str = match.group(1)
-        
-        try:
-            # The captured string is now a complete dictionary representation
-            clean_str = captured_value_str.replace('np.float64(', '')
-
-            # Convert the cleaned string into a dictionary using eval()
-            data_dict = eval(clean_str)
-
-            # 4. Extract the 'mse' value
-            # print(f"extracted mse is {float(data_dict['mse'])}")
-            return float(data_dict['log10_nmse'])
-
-        except Exception as e:
-            # Handle potential errors during evaluation or key access
-            logger.error(f"parse_eval_results: Failed to parse dictionary from string '{captured_value_str}'. Error: {e}")
-            return None
+    parsed_metrics = parse_eval_metrics(eval_results)
+    if not parsed_metrics:
+      return None
+    return parsed_metrics.get("log10_nmse")
 
   elif isinstance(eval_results, list):
     parsed_results = []
     for result in eval_results:
       parsed_val = parse_eval_results(result)
       if parsed_val is not None:
-          parsed_results.append(parsed_val)
-          
+        parsed_results.append(parsed_val)
+
     if len(parsed_results) == 1:
-        return parsed_results[0]
+      return parsed_results[0]
     elif not parsed_results:
-        return None
+      return None
     else:
-        return parsed_results
+      return parsed_results
+
+
+def _parse_candidate_dict(eval_result: str) -> dict | None:
+  if not eval_result:
+    return None
+  pattern = r"Candidate:\s*({.+?})\s*"
+  match = re.search(pattern, eval_result, re.DOTALL)
+  if not match:
+    return None
+
+  captured_value_str = match.group(1)
+  try:
+    clean_str = re.sub(r"np\.float64\(([^)]+)\)", r"\1", captured_value_str)
+    parsed = ast.literal_eval(clean_str)
+    if isinstance(parsed, dict):
+      return parsed
+  except Exception as e:
+    logger.error(f"_parse_candidate_dict: Failed to parse candidate metrics: {e}")
+  return None
+
+
+def parse_eval_metrics(eval_results: list[str] | str) -> dict[str, float]:
+  if isinstance(eval_results, str):
+    parsed = _parse_candidate_dict(eval_results)
+    if not parsed:
+      return {}
+    metrics = {}
+    for key, value in parsed.items():
+      try:
+        metrics[str(key)] = float(value)
+      except Exception:
+        continue
+    return metrics
+
+  if isinstance(eval_results, list):
+    if len(eval_results) == 1:
+      return parse_eval_metrics(eval_results[0])
+    merged = {}
+    for idx, eval_result in enumerate(eval_results):
+      sub_metrics = parse_eval_metrics(eval_result)
+      for key, value in sub_metrics.items():
+        merged[f"{key}_ds{idx}"] = value
+    return merged
+
+  return {}

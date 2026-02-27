@@ -14,9 +14,11 @@ import logging
 import os
 import sys
 import time
+import shutil
 from concurrent.futures import ProcessPoolExecutor, Future
 from copy import deepcopy
 from typing import Optional
+import analysis_utils
 
 logger = logging.getLogger("controller")
 
@@ -45,6 +47,16 @@ class IterationResult:
     success: bool = False
     error: Optional[str] = None
     elapsed: float = 0.0
+    compile_success: bool = False
+    eval_success: bool = False
+    compile_attempts: int = 0
+    eval_attempts: int = 0
+    compile_errors: list = dataclasses.field(default_factory=list)
+    eval_failures: list = dataclasses.field(default_factory=list)
+    analysis_success: bool = False
+    analysis_attempts: int = 0
+    analysis_metrics: dict = dataclasses.field(default_factory=dict)
+    analysis_errors: list = dataclasses.field(default_factory=list)
 
 
 def _worker_init(config_dict: dict, project_root: str, workflows_dir: str):
@@ -91,6 +103,8 @@ def _run_island_iteration(
     max_attempt: int,
     baseline_id: int,
     transcript_file: str,
+    analysis_context: Optional[str] = None,
+    pre_eval_analysis_prompt: Optional[str] = None,
 ) -> IterationResult:
     """Worker function executed in a child process.
 
@@ -115,6 +129,8 @@ def _run_island_iteration(
 
         transcript = Transcript(log_filename=transcript_file)
         transcript.log_debug_message(f"### Starting parallel iteration {iteration} on island {island_id}")
+        if analysis_context:
+            transcript.append(ContentChunk(analysis_context, "system", tags=["analysis_context"]))
         trial = AlgorithmTrial()
 
         sota_algo = parent_code
@@ -127,6 +143,7 @@ def _run_island_iteration(
             new_hypo = idea_select_utils.scratch_pad(new_idea_repo, llm_name, transcript, config, idea_gen_prompt_text)
             if not new_hypo:
                 result.error = "Failed to generate new hypothesis"
+                result.eval_failures = ["Failed to generate new hypothesis from scratch-pad stage."]
                 result.elapsed = time.time() - t0
                 result.updated_idea_repo = new_idea_repo
                 return result
@@ -169,9 +186,54 @@ def _run_island_iteration(
         transcript.hide_by_tag(tags=["initial_compile_loop"])
         if not trial.compile_success:
             result.error = "Compilation failed"
+            result.compile_success = False
+            result.eval_success = False
+            result.compile_attempts = trial.compile_attempts
+            result.compile_errors = trial.compile_errors
+            result.eval_attempts = trial.eval_attempts
+            result.eval_failures = trial.eval_failures
             result.elapsed = time.time() - t0
             result.updated_idea_repo = new_idea_repo if use_idea_repo else None
             return result
+        result.compile_success = True
+
+        analysis_config = config
+        worker_harness_path = None
+        base_harness_path = config['paths'].get(
+            'analysis_harness_path',
+            os.path.join(os.path.dirname(workflow_utils.__file__), "pre_eval_analysis_harness.py")
+        )
+        if os.path.exists(base_harness_path):
+            worker_harness_path = os.path.join(
+                "/tmp",
+                f"pre_eval_analysis_harness_{os.getpid()}_{iteration}_{island_id}.py",
+            )
+            try:
+                shutil.copyfile(base_harness_path, worker_harness_path)
+                analysis_config = deepcopy(config)
+                analysis_config.setdefault("paths", {})
+                analysis_config["paths"]["analysis_harness_path"] = worker_harness_path
+            except Exception as copy_error:
+                logger.warning(f"Failed to create worker-local pre-eval harness copy: {copy_error}")
+
+        trial = workflow_utils.run_pre_eval_analysis(
+            llm_name=llm_name,
+            trial=trial,
+            transcript=transcript,
+            config=analysis_config,
+            analysis_prompt=pre_eval_analysis_prompt,
+            max_attempts=max(1, min(max_attempt, 3)),
+        )
+        transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
+        result.analysis_success = trial.analysis_success
+        result.analysis_attempts = trial.analysis_attempts
+        result.analysis_metrics = trial.analysis_metrics
+        result.analysis_errors = trial.analysis_errors
+        if worker_harness_path and os.path.exists(worker_harness_path):
+            try:
+                os.remove(worker_harness_path)
+            except OSError:
+                pass
 
         # Eval
         trial = workflow_utils.edit_until_successful_eval(
@@ -182,9 +244,19 @@ def _run_island_iteration(
         transcript.hide_by_tag(tags=["initial_eval_loop"])
         if not all(trial.eval_success):
             result.error = "Evaluation failed"
+            result.eval_success = False
+            result.compile_attempts = trial.compile_attempts
+            result.compile_errors = trial.compile_errors
+            result.eval_attempts = trial.eval_attempts
+            result.eval_failures = trial.eval_failures
+            result.analysis_success = trial.analysis_success
+            result.analysis_attempts = trial.analysis_attempts
+            result.analysis_metrics = trial.analysis_metrics
+            result.analysis_errors = trial.analysis_errors
             result.elapsed = time.time() - t0
             result.updated_idea_repo = new_idea_repo if use_idea_repo else None
             return result
+        result.eval_success = True
 
         # Parse score
         eval_score = _worker_task_eval_utils.parse_eval_results(trial.eval_results)
@@ -214,6 +286,16 @@ def _run_island_iteration(
         result.idea_id = trial.idea_id
         result.success = True
         result.elapsed = time.time() - t0
+        result.compile_success = True
+        result.eval_success = True
+        result.compile_attempts = trial.compile_attempts
+        result.compile_errors = trial.compile_errors
+        result.eval_attempts = trial.eval_attempts
+        result.eval_failures = trial.eval_failures
+        result.analysis_success = trial.analysis_success
+        result.analysis_attempts = trial.analysis_attempts
+        result.analysis_metrics = trial.analysis_metrics
+        result.analysis_errors = trial.analysis_errors
 
         # Update idea exp_history and attach for main process to append
         if use_idea_repo and new_idea_repo is not None and trial.idea_id != -1:
@@ -227,6 +309,18 @@ def _run_island_iteration(
     except Exception as e:
         result.error = str(e)
         result.elapsed = time.time() - t0
+        try:
+            if 'worker_harness_path' in locals() and worker_harness_path and os.path.exists(worker_harness_path):
+                os.remove(worker_harness_path)
+        except OSError:
+            pass
+        try:
+            result.compile_attempts = trial.compile_attempts
+            result.compile_errors = trial.compile_errors
+            result.eval_attempts = trial.eval_attempts
+            result.eval_failures = trial.eval_failures
+        except Exception:
+            pass
         try:
             result.updated_idea_repo = new_idea_repo if use_idea_repo else None
         except NameError:
@@ -248,6 +342,7 @@ async def run_parallel_evolution(
     project_root: str,
     workflows_dir: str,
     num_workers: int = 4,
+    analysis_manager: analysis_utils.AnalysisManager | None = None,
 ):
     """Run multi-island evolution with true process-level parallelism.
 
@@ -272,6 +367,8 @@ async def run_parallel_evolution(
     import idea_select_utils
     import workflow_utils
     import llm_utils
+
+    pre_eval_analysis_prompt = getattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT", None)
 
     completed = 0
     submitted = 0
@@ -341,6 +438,9 @@ async def run_parallel_evolution(
                         idea_snapshot = deepcopy(idea_repo_db.idea_repos[island_id_for_iter][-1])
 
             iter_id = submitted
+            analysis_context = None
+            if analysis_manager is not None:
+                analysis_context = analysis_manager.build_reasoning_context(island_id_for_iter)
             fut = executor.submit(
                 _run_island_iteration,
                 iter_id,
@@ -352,6 +452,8 @@ async def run_parallel_evolution(
                 args.max_attempt,
                 baseline_id,
                 transcript_file,
+                analysis_context,
+                pre_eval_analysis_prompt,
             )
             pending[iter_id] = (fut, island_id_for_iter, is_last_backtrack, bt_repo_idx)
             submitted += 1
@@ -419,6 +521,33 @@ async def run_parallel_evolution(
                     logger.info(f"Island {island_id}: Merged backtrack results on failure")
                 if _compute_trigger_merge(repo, is_last_bt, bt_repo_idx):
                     workflow_utils.merge_ideas(config["llm"]["name"], transcript_file, config, repo, args.idea_cap)
+
+            def _record_iteration_analysis(result_obj: IterationResult, failure_reason: Optional[str]) -> None:
+                if analysis_manager is None:
+                    return
+                analysis_manager.record_iteration(
+                    analysis_utils.IterationAnalysisRecord(
+                        iteration=result_obj.iteration,
+                        island_id=result_obj.island_id,
+                        success=result_obj.success,
+                        compile_success=result_obj.compile_success,
+                        eval_success=result_obj.eval_success,
+                        compile_attempts=result_obj.compile_attempts,
+                        eval_attempts=result_obj.eval_attempts,
+                        analysis_attempts=result_obj.analysis_attempts,
+                        idea_id=result_obj.idea_id,
+                        eval_score=result_obj.eval_score,
+                        analysis_success=result_obj.analysis_success,
+                        analysis_metrics=result_obj.analysis_metrics,
+                        summary_bullets=result_obj.summary_bullets,
+                        compile_errors=result_obj.compile_errors,
+                        eval_failures=result_obj.eval_failures,
+                        analysis_errors=result_obj.analysis_errors,
+                        eval_results=result_obj.eval_results,
+                        failure_reason=failure_reason,
+                        elapsed_seconds=result_obj.elapsed,
+                    )
+                )
 
             if result.success and result.eval_score is not None:
                 db.register_program(
@@ -488,13 +617,16 @@ async def run_parallel_evolution(
                 )
                 if result.summary_bullets:
                     logger.info("Summary: " + " | ".join(result.summary_bullets[:3]))
+                _record_iteration_analysis(result, None)
             else:
                 # Failure: apply merge logic to match sequential (last_bt_iter merge, merge_ideas)
                 _apply_failure_merge(result.updated_idea_repo, done_is_last_backtrack, done_bt_repo_idx)
+                failure_reason = result.error or ("score_parse_failed" if result.success else "iteration_failed")
                 logger.warning(
                     f"Iteration {result.iteration} (island {island_id}) failed: "
                     f"{result.error or 'unknown'}"
                 )
+                _record_iteration_analysis(result, failure_reason)
 
             completed += 1
             while _submit_one():

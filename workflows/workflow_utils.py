@@ -18,6 +18,7 @@ import traceback
 import logging
 import os
 import re
+import json
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -43,6 +44,23 @@ class AlgorithmTrial:
   eval_success: list[bool] = dataclasses.field(default_factory=list)
   eval_results: list[str] = dataclasses.field(default_factory=list)
   idea_id: int = -1
+  compile_attempts: int = 0
+  eval_attempts: int = 0
+  compile_errors: list[str] = dataclasses.field(default_factory=list)
+  eval_failures: list[str] = dataclasses.field(default_factory=list)
+  analysis_success: bool = False
+  analysis_results: str = ""
+  analysis_attempts: int = 0
+  analysis_errors: list[str] = dataclasses.field(default_factory=list)
+  analysis_metrics: dict[str, float] = dataclasses.field(default_factory=dict)
+
+
+def _truncate_error_message(message: str, max_chars: int = 1200) -> str:
+  if message is None:
+    return ""
+  if len(message) <= max_chars:
+    return message
+  return message[: max_chars - 3] + "..."
 
 
 def _summarize_compile_error(process: CompletedProcess, config: dict) -> str:
@@ -90,7 +108,7 @@ def attempt_compile(
   trial: AlgorithmTrial,
   compile_config: CompilationConfig,
   config: dict,
-) -> tuple[AlgorithmTrial, str]:
+) -> tuple[AlgorithmTrial, str, str | None]:
   try:
     edit_library(
       compile_config.target_file_path,
@@ -100,7 +118,7 @@ def attempt_compile(
   except ValueError as e:
     error_message = f"INTERNAL ERROR: Failed to edit library: {e}"
     logger.critical(f"attempt_compile: {error_message}")
-    return trial, error_message
+    return trial, error_message, error_message
   
   task_id = config['experiment']['task_id']
   # Dynamically import task-specific eval_utils
@@ -110,6 +128,7 @@ def attempt_compile(
   success = (compile_output.returncode == 0)
 
   output_message = "Code compiled successfully."
+  error_description = None
   if not success:
     error_description = _summarize_compile_error(compile_output, config)
     output_message = (
@@ -124,7 +143,7 @@ def attempt_compile(
     logger.debug(f"attempt_compile: {line}")
   output_trial = copy.deepcopy(trial)
   output_trial.compile_success = success
-  return output_trial, output_message
+  return output_trial, output_message, error_description
 
 
 def edit_until_compile(
@@ -143,6 +162,7 @@ def edit_until_compile(
   code_was_revised = False
   recovery_prompt = None
   trial = copy.deepcopy(trial)  # Do not modify the original trial object.
+  existing_compile_attempts = trial.compile_attempts
   while num_attempts < max_compile_attempts:
     num_attempts += 1
     logger.info(f"edit_until_compile: {num_attempts}/{max_compile_attempts}")
@@ -163,6 +183,7 @@ def edit_until_compile(
       logger.critical(
         "edit_unil_compile: Expected latest message to be from 'model'."
       )
+      trial.compile_errors.append("No model response found at end of transcript.")
       recovery_prompt = "Error: No model response found. Please respond."
       continue
 
@@ -171,6 +192,7 @@ def edit_until_compile(
     # print(f"edit_until_compile: LLM Response:\n{current_llm_response}")
     if not current_llm_response:
       logger.warning("edit_until_compile: No response.")
+      trial.compile_errors.append("Model returned an empty response.")
       recovery_prompt = (
         "Your output did not contain any markdown-formatted code blocks. "
         "Please provide one."
@@ -181,6 +203,7 @@ def edit_until_compile(
       idea_id = idea_select_utils.extract_idea_id(current_llm_response)
       if not idea_id:
         logger.warning("edit_until_compile: Idea ID not found in response.")
+        trial.compile_errors.append("Missing Idea ID in model response.")
         recovery_prompt = (
           "Your output did not contain Idea ID for the selected idea. "
           "Please provide one."
@@ -195,6 +218,7 @@ def edit_until_compile(
 
     if not code_blocks:
       logger.warning("edit_until_compile: Code blocks not found in response.")
+      trial.compile_errors.append("No markdown code block found in model response.")
       recovery_prompt = (
         "Your output did not contain any markdown-formatted code blocks. "
         "Please provide one."
@@ -202,12 +226,16 @@ def edit_until_compile(
       continue
 
     trial.algorithm_implementation = code_blocks[0]  # Use the first block.
-    trial, recovery_prompt = attempt_compile(trial, compile_config, config)
+    trial, recovery_prompt, compile_error_summary = attempt_compile(trial, compile_config, config)
+    if compile_error_summary:
+      trial.compile_errors.append(_truncate_error_message(compile_error_summary))
 
     if trial.compile_success:
       logger.info(f"edit_until_compile: Attempt {num_attempts} successful")
       # All of the state is contained within the trial object.
       break
+
+  trial.compile_attempts = existing_compile_attempts + num_attempts
 
   if trial.compile_success and code_was_revised:
     transcript.log_debug_message(
@@ -335,6 +363,172 @@ def edit_library(
   )
 
 
+def _extract_analysis_metrics(output_text: str) -> dict[str, float]:
+  if not output_text:
+    return {}
+  pattern = re.compile(r"AnalysisMetrics:\s*(\{.*?\})", re.DOTALL)
+  match = pattern.search(output_text)
+  if not match:
+    return {}
+
+  metrics_raw = match.group(1)
+  try:
+    parsed = json.loads(metrics_raw)
+  except Exception:
+    return {}
+
+  metrics = {}
+  for key, value in parsed.items():
+    try:
+      metrics[str(key)] = float(value)
+    except Exception:
+      continue
+  return metrics
+
+
+def _default_pre_eval_analysis_prompt(candidate_code: str) -> str:
+  return f"""
+You are designing a lightweight pre-evaluation analysis module for an evolutionary workflow.
+
+The candidate implementation to analyze is:
+```python
+{candidate_code}
+```
+
+Your job is to implement an analysis function:
+`def analyze_candidate(candidate_source: str) -> dict[str, float]:`
+
+Requirements:
+- Return ONLY numeric metrics (floats/ints) in the dict.
+- Metrics should be cheap to compute and deterministic.
+- Include at least 8 metrics that help reason about complexity/risk.
+- Prefix metric names with `analysis_`.
+- Do not read files or call network; analyze only `candidate_source`.
+- Output valid Python code in a markdown code block.
+- The code must define `analyze_candidate` exactly once.
+"""
+
+
+def run_pre_eval_analysis(
+  llm_name,
+  trial: AlgorithmTrial,
+  transcript: Transcript,
+  config: dict,
+  analysis_prompt: str | None = None,
+  max_attempts: int = 2,
+) -> AlgorithmTrial:
+  """Generates and runs a pre-eval analyzer script for extra metrics."""
+  trial = copy.deepcopy(trial)
+
+  src_path = os.path.expanduser(config['paths']['src_path'])
+  candidate_path = os.path.join(src_path, config['paths']['target_file_path'])
+  harness_path = config['paths'].get(
+    'analysis_harness_path',
+    os.path.join(os.path.dirname(__file__), "pre_eval_analysis_harness.py")
+  )
+  harness_path = os.path.abspath(os.path.expanduser(harness_path))
+
+  if not os.path.exists(harness_path):
+    message = f"Pre-eval analysis harness not found at {harness_path}. Skipping."
+    logger.warning(message)
+    trial.analysis_success = False
+    trial.analysis_errors.append(message)
+    return trial
+
+  loop_tag = "pre_eval_analysis_loop"
+  summary_tag = "pre_eval_analysis_summary"
+
+  if not analysis_prompt:
+    analysis_prompt = _default_pre_eval_analysis_prompt(trial.algorithm_implementation)
+
+  generated_code = None
+  for attempt in range(max_attempts):
+    trial.analysis_attempts += 1
+    if attempt == 0:
+      prompt_text = analysis_prompt
+    else:
+      prompt_text = (
+        "Your previous analysis code was invalid or missing. "
+        "Please provide a valid Python code block that defines analyze_candidate(candidate_source: str)."
+      )
+
+    transcript.append(ContentChunk(prompt_text, "user", tags=[loop_tag]))
+    llm_response_text = llm_utils.generate_completion(llm_name, transcript, config)
+    transcript.append(ContentChunk(llm_response_text, "model", tags=[loop_tag]))
+
+    code_blocks = llm_utils.extract_code_blocks(llm_response_text)
+    if not code_blocks:
+      trial.analysis_errors.append("No code block found in pre-eval analysis response.")
+      continue
+    generated_code = code_blocks[0]
+
+    if "def analyze_candidate" not in generated_code:
+      trial.analysis_errors.append("Generated pre-eval analysis code did not define analyze_candidate.")
+      generated_code = None
+      continue
+    break
+
+  if generated_code:
+    patch_config = copy.deepcopy(config)
+    if 'compilation' not in patch_config:
+      patch_config['compilation'] = {}
+    patch_config['compilation']['edit_start_tag'] = "RegexTagPreEvalAnalysisStart"
+    patch_config['compilation']['edit_end_tag'] = "RegexTagPreEvalAnalysisEnd"
+    try:
+      edit_library(
+        target_file_path=harness_path,
+        algorithm_implementation=generated_code,
+        config=patch_config,
+      )
+    except Exception as e:
+      trial.analysis_errors.append(f"Failed to write generated pre-eval analyzer: {e}")
+
+  conda_env = config['compilation'].get('conda_env')
+  if conda_env:
+    command = f"conda run -n {conda_env} python {harness_path} --candidate_path {candidate_path}"
+  else:
+    command = f"python {harness_path} --candidate_path {candidate_path}"
+
+  process_result = task_utils._call_shell_command(
+    command,
+    timeout=config.get('evaluation', {}).get('eval_timeout', 300),
+    max_retries=1,
+  )
+
+  if not process_result:
+    trial.analysis_success = False
+    trial.analysis_errors.append("Pre-eval analysis process failed to complete.")
+    summary = "Pre-eval analysis failed to complete."
+    transcript.append(ContentChunk(summary, "system", tags=[summary_tag]))
+    return trial
+
+  result_text = "\n".join([process_result.stdout.strip(), process_result.stderr.strip()]).strip()
+  trial.analysis_results = result_text
+  trial.analysis_success = (process_result.returncode == 0)
+  if not trial.analysis_success:
+    trial.analysis_errors.append(_truncate_error_message(result_text, max_chars=800))
+  trial.analysis_metrics = _extract_analysis_metrics(result_text)
+
+  if trial.analysis_success:
+    metrics_text = json.dumps(trial.analysis_metrics, sort_keys=True)
+    transcript.append(
+      ContentChunk(
+        f"Pre-eval analysis metrics:\n```json\n{metrics_text}\n```",
+        "system",
+        tags=[summary_tag],
+      )
+    )
+  else:
+    transcript.append(
+      ContentChunk(
+        "Pre-eval analysis failed. Continue with evaluation using available metrics only.",
+        "system",
+        tags=[summary_tag],
+      )
+    )
+  return trial
+
+
 def attempt_evals(
   eval_configs: list,
   trial: AlgorithmTrial,
@@ -407,6 +601,7 @@ def edit_until_successful_eval(
 
   code_was_revised = False
   num_attempts = 0
+  existing_eval_attempts = trial.eval_attempts
   while num_attempts < max_eval_attempts:
     num_attempts += 1
     logger.info(
@@ -445,6 +640,9 @@ def edit_until_successful_eval(
       msg for msg, flag in zip(trial.eval_results, trial.eval_success)
       if not flag
     ]
+    for msg in failed_eval_messages:
+      if len(trial.eval_failures) < 20:
+        trial.eval_failures.append(_truncate_error_message(msg))
     transcript.append(
       ContentChunk(
         "\n".join(f"- {m}" for m in failed_eval_messages),
@@ -477,6 +675,7 @@ def edit_until_successful_eval(
 
   # If we reach here, we either succeeded in evals or exhausted the attempts.
   final_success = all(trial.eval_success)
+  trial.eval_attempts = existing_eval_attempts + num_attempts
   if final_success:
     logger.info(
       f"edit_until_successful_eval: All evals ran for candidate {candidate_id} "

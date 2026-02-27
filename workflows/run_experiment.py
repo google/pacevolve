@@ -31,7 +31,7 @@ project_root = os.path.dirname(workflows_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import llm_utils, workflow_utils, program_database, task_utils, idea_select_utils
+import llm_utils, workflow_utils, program_database, task_utils, idea_select_utils, analysis_utils
 import importlib
 
 # NOTE: LLM interactions are handled in llm_utils.py
@@ -81,6 +81,58 @@ def load_configs(config_path) -> tuple[dict, CompilationConfig, list, str, objec
   # prompts = importlib.import_module(f"tasks.{task_id}.config.prompts")
 
   return config, compile_config, eval_configs, llm_name
+
+
+def record_iteration_analysis(
+    analysis_manager: analysis_utils.AnalysisManager,
+    iteration: int,
+    island_id: int,
+    trial: AlgorithmTrial | None,
+    success: bool,
+    eval_score: float | None = None,
+    summary_bullets: list[str] | None = None,
+    failure_reason: str | None = None,
+    eval_results: list[str] | None = None,
+    elapsed_seconds: float | None = None,
+):
+  trial = trial if trial is not None else AlgorithmTrial()
+  record = analysis_utils.IterationAnalysisRecord(
+    iteration=iteration,
+    island_id=island_id,
+    success=success,
+    compile_success=trial.compile_success,
+    eval_success=all(trial.eval_success) if trial.eval_success else False,
+    compile_attempts=trial.compile_attempts,
+    eval_attempts=trial.eval_attempts,
+    analysis_attempts=trial.analysis_attempts,
+    idea_id=trial.idea_id,
+    eval_score=eval_score,
+    analysis_success=trial.analysis_success,
+    analysis_metrics=trial.analysis_metrics,
+    summary_bullets=summary_bullets or [],
+    compile_errors=trial.compile_errors[:20],
+    eval_failures=trial.eval_failures[:20],
+    analysis_errors=trial.analysis_errors[:20],
+    eval_results=eval_results or trial.eval_results,
+    failure_reason=failure_reason,
+    elapsed_seconds=elapsed_seconds,
+  )
+  analysis_manager.record_iteration(record)
+
+
+def get_pre_eval_analysis_prompt(prompts_module, trial: AlgorithmTrial, transcript: Transcript) -> str | None:
+  """Returns task-specific pre-eval analysis prompt if available."""
+  if hasattr(prompts_module, "construct_pre_eval_analysis_prompt"):
+    try:
+      return prompts_module.construct_pre_eval_analysis_prompt(
+        trial.algorithm_implementation,
+        transcript,
+      )
+    except Exception:
+      return None
+  if hasattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT"):
+    return getattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT")
+  return None
 
 
 if __name__ == "__main__":
@@ -240,6 +292,7 @@ if __name__ == "__main__":
 
   baseline_id = config['experiment']['initial_baseline_id']
   task_id = config['experiment']['task_id']
+  task_eval_utils = importlib.import_module(f"tasks.{task_id}.eval.eval_utils")
   # Dynamically import task-specific prompts
   prompt_filename = config['experiment'].get('prompts_file', 'prompts')
   if args.dataset_id == ".":
@@ -275,6 +328,25 @@ if __name__ == "__main__":
     initial_repo.sota = sota_algo
     idea_repo_db.idea_repos[temp_id].append(initial_repo)
 
+  analysis_cfg = config.get("analysis", {})
+  analysis_dir = os.path.expanduser(
+    config['paths'].get('analysis_dir', os.path.join(logfile_dir, "analysis"))
+  )
+  os.makedirs(analysis_dir, exist_ok=True)
+  analysis_jsonl_path = os.path.join(analysis_dir, f"iteration_analysis_{timestamp}.jsonl")
+  analysis_report_path = os.path.join(analysis_dir, f"postmortem_{timestamp}.md")
+  analysis_manager = analysis_utils.AnalysisManager(
+    metric_direction=metric_dir,
+    jsonl_path=analysis_jsonl_path,
+    report_path=analysis_report_path,
+    task_eval_utils=task_eval_utils,
+    history_window=analysis_cfg.get("history_window", 60),
+    max_context_chars=analysis_cfg.get("max_context_chars", 2400),
+    recent_analysis_window=analysis_cfg.get("recent_analysis_window", 3),
+  )
+  logger.info(f"Iteration analysis will be written to: {analysis_jsonl_path}")
+  logger.info(f"Post-mortem report will be written to: {analysis_report_path}")
+
   logger.info(f"Backtrack frequency is {args.backtrack_freq}, Back track length is {args.backtrack_len}, alpha for power law is {args.power_alpha}")
 
   # --- Parallel mode dispatch ---
@@ -292,14 +364,19 @@ if __name__ == "__main__":
         project_root=project_root,
         workflows_dir=workflows_dir,
         num_workers=args.num_workers,
+        analysis_manager=analysis_manager,
     ))
     logger.info("Parallel evolution finished.")
+    logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
+    logger.info(f"Post-mortem report: {analysis_report_path}")
     sys.exit(0)
 
   # --- Sequential mode (original) ---
   repo_idx_before_backtrack = 0
   backtrack_triggered_idx = -1
+  island_id = 0
   for i in range(max_iters):
+    iter_start_time = time.time()
     last_bt_iter = False
     logger.info(f"\n{'='*40} Iteration {i} {'='*40}")
 
@@ -349,6 +426,9 @@ if __name__ == "__main__":
     # elif args.backtrack_freq != -1 and (i+1) % args.backtrack_freq < args.backtrack_len and i >= args.backtrack_freq:
 
     new_idea_repo.sota = sota_algo
+    analysis_context = analysis_manager.build_reasoning_context(island_id)
+    if analysis_context:
+      transcript.append(ContentChunk(analysis_context, "system", tags=["analysis_context"]))
 
     per_island_count[island_id] += 1
     trigger_merge = False
@@ -364,12 +444,22 @@ if __name__ == "__main__":
       new_hypo = idea_select_utils.scratch_pad(new_idea_repo, llm_name, transcript, config, idea_gen_prompt_text)
       if not new_hypo:
         logger.error(f"Iter {i} failed to generate new hypothesis. Skipping to next iteration.")
+        trial.eval_failures.append("Failed to generate new hypothesis from scratch-pad stage.")
         if last_bt_iter and args.merge_freq > -1:
           logger.info(f"End of sequence, merge backtrack results and main results")
           new_idea_repo.ideas.extend(idea_repo_db.idea_repos[island_id][repo_idx_before_backtrack].ideas)
           new_idea_repo.reindex_ideas()
         if trigger_merge:
           workflow_utils.merge_ideas(llm_name, transcript_file, config, new_idea_repo, args.idea_cap)
+        record_iteration_analysis(
+          analysis_manager=analysis_manager,
+          iteration=i,
+          island_id=island_id,
+          trial=trial,
+          success=False,
+          failure_reason="idea_generation_failed",
+          elapsed_seconds=time.time() - iter_start_time,
+        )
         continue
 
       # This is step 2: Idea selection.
@@ -432,7 +522,29 @@ if __name__ == "__main__":
         new_idea_repo.reindex_ideas()
       if trigger_merge:
         workflow_utils.merge_ideas(llm_name, transcript_file, config, new_idea_repo, args.idea_cap)
+      record_iteration_analysis(
+        analysis_manager=analysis_manager,
+        iteration=i,
+        island_id=island_id,
+        trial=trial,
+        success=False,
+        failure_reason="compile_failed",
+        elapsed_seconds=time.time() - iter_start_time,
+      )
       continue
+
+    pre_eval_prompt = get_pre_eval_analysis_prompt(prompts, trial, transcript)
+    trial = workflow_utils.run_pre_eval_analysis(
+      llm_name=llm_name,
+      trial=trial,
+      transcript=transcript,
+      config=config,
+      analysis_prompt=pre_eval_prompt,
+      max_attempts=max(1, min(args.max_attempt, 3)),
+    )
+    transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
+    if not trial.analysis_success:
+      logger.warning(f"Iter {i}: Pre-eval analysis did not complete successfully. Proceeding to eval.")
 
     # Run the evaluation process.
     trial = workflow_utils.edit_until_successful_eval(
@@ -449,13 +561,21 @@ if __name__ == "__main__":
         new_idea_repo.reindex_ideas()
       if trigger_merge:
         workflow_utils.merge_ideas(llm_name, transcript_file, config, new_idea_repo, args.idea_cap)
+      record_iteration_analysis(
+        analysis_manager=analysis_manager,
+        iteration=i,
+        island_id=island_id,
+        trial=trial,
+        success=False,
+        failure_reason="eval_failed",
+        elapsed_seconds=time.time() - iter_start_time,
+      )
       continue
     # Log the initial eval results to the transcript.
     transcript.append(ContentChunk(prompts.EVAL_DESCRIPTION_PROMPT,"user", tags=["initial_eval_results"]))
     eval_results = "\n".join(["```"] + trial.eval_results + ["```"])
     transcript.append(ContentChunk(eval_results, "system", tags=["initial_eval_results"]))
 
-    task_eval_utils = importlib.import_module(f"tasks.{task_id}.eval.eval_utils")
     eval_score = task_eval_utils.parse_eval_results(trial.eval_results)
     logger.debug(f"My eval score is {eval_score}")
     if eval_score is None:
@@ -468,6 +588,8 @@ if __name__ == "__main__":
     # Summarize the experiment status.
     summary_prompt = prompts.SUMMARIZE_EVAL_PROMPT
     transcript.append(ContentChunk(summary_prompt, "user", tags=["final_summary_request"]))
+    llm_summary = None
+    bullets = []
     for idx in range(args.max_attempt):
       llm_summary = llm_utils.generate_completion(llm_name, transcript, config)
       if not llm_summary:
@@ -477,7 +599,8 @@ if __name__ == "__main__":
         break
 
     try:
-      bullets = workflow_utils.extract_summary(llm_summary)
+      if llm_summary:
+        bullets = workflow_utils.extract_summary(llm_summary)
       ablation_list.extend(bullets)
       if args.use_idea_repo:
         if trial.idea_id == -1:
@@ -504,9 +627,25 @@ if __name__ == "__main__":
     idea_repo_db.idea_repos[island_id].append(new_idea_repo)
     # idea_repo = new_idea_repo
 
+    failure_reason = None if eval_score is not None else "score_parse_failed"
+    record_iteration_analysis(
+      analysis_manager=analysis_manager,
+      iteration=i,
+      island_id=island_id,
+      trial=trial,
+      success=True,
+      eval_score=eval_score,
+      summary_bullets=bullets,
+      failure_reason=failure_reason,
+      eval_results=trial.eval_results,
+      elapsed_seconds=time.time() - iter_start_time,
+    )
+
     logger.info(f"Iter {i} summary:\n" + "\n".join(bullets))
 
     logger.info(f"{'='*40} Iteration {i} finished {'='*40}\n")
 
   logger.info(f"All {max_iters} iterations finished.")
   logger.info(f"LLM Transcript log: {transcript_file}")
+  logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
+  logger.info(f"Post-mortem report: {analysis_report_path}")

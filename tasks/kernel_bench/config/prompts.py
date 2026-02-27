@@ -572,3 +572,17 @@ Should we update the baseline algorithm? Please answer yes or no then explain yo
 
 {CODING_REQ}
 """
+
+
+PRE_EVAL_ANALYSIS_PROMPT = """
+Create a lightweight Python analysis function for the current candidate before evaluation.
+
+Output a markdown code block that defines:
+`def analyze_candidate(candidate_source: str) -> dict[str, float]:`
+
+Requirements:
+- Return numeric metrics only.
+- Prefix metric names with `analysis_`.
+- Keep compute cheap and deterministic.
+- Focus on metrics that help explain failure modes and optimization potential.
+"""

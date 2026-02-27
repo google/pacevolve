@@ -113,29 +113,58 @@ def parse_eval_results(
   eval_results: list[str] | str,
 ) -> list[float | None] | float | None:
   """
-  Parses a string or list of strings to extract the AUC value from the 'Candidate' section.
+  Parses a string or list of strings to extract the score used for evolution.
+  We optimize for lower training time once target validation quality is met.
   """
   if isinstance(eval_results, str):
-    # This pattern specifically finds "AUC: " and captures the floating-point number after it.
-    pattern = r"Candidate validation loss:.*?Training time:\s*(\d+\.\d+)"
-
-    match = re.search(pattern, eval_results)
-
-    if match:
-        # match.group(1) is the captured AUC value string (e.g., "0.754063")
-        auc_str = match.group(1)
-        try:
-            return float(auc_str)
-        except ValueError:
-            # This is unlikely to happen with this specific regex but is good practice
-            logger.error(f"Could not convert captured value '{auc_str}' to a float.")
-            return None
-
-    logger.error(f"Pattern not found in the string: '{eval_results}'")
-    return None
+    metrics = parse_eval_metrics(eval_results)
+    if not metrics:
+      logger.error(f"Pattern not found in the string: '{eval_results}'")
+      return None
+    if "training_time" in metrics:
+      return metrics["training_time"]
+    return metrics.get("candidate_validation_loss")
   
   elif isinstance(eval_results, list):
     return [parse_eval_results(result) for result in eval_results]
   
   else:
     raise ValueError("Input must be a string or a list of strings.")
+
+
+def _extract_single_metric(pattern: str, text: str) -> float | None:
+  match = re.search(pattern, text, re.IGNORECASE)
+  if not match:
+    return None
+  try:
+    return float(match.group(1))
+  except ValueError:
+    return None
+
+
+def parse_eval_metrics(eval_results: list[str] | str) -> dict[str, float]:
+  if isinstance(eval_results, str):
+    metrics: dict[str, float] = {}
+    fields = {
+      "candidate_validation_loss": r"Candidate validation loss:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)",
+      "training_time": r"Training time:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)",
+      "baseline_validation_loss": r"Baseline validation loss:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)",
+      "baseline_training_time": r"Baseline training time:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)",
+    }
+    for key, pattern in fields.items():
+      value = _extract_single_metric(pattern, eval_results)
+      if value is not None:
+        metrics[key] = value
+    return metrics
+
+  if isinstance(eval_results, list):
+    if len(eval_results) == 1:
+      return parse_eval_metrics(eval_results[0])
+    merged: dict[str, float] = {}
+    for idx, eval_result in enumerate(eval_results):
+      sub_metrics = parse_eval_metrics(eval_result)
+      for key, value in sub_metrics.items():
+        merged[f"{key}_ds{idx}"] = value
+    return merged
+
+  return {}
