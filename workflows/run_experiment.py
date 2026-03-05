@@ -84,7 +84,7 @@ def load_configs(config_path) -> tuple[dict, CompilationConfig, list, str, objec
 
 
 def record_iteration_analysis(
-    analysis_manager: analysis_utils.AnalysisManager,
+    analysis_manager: analysis_utils.AnalysisManager | None,
     iteration: int,
     island_id: int,
     trial: AlgorithmTrial | None,
@@ -261,8 +261,15 @@ if __name__ == "__main__":
     default=8,
     help="Number of parallel worker processes (used with --parallel)."
   )
+  parser.add_argument(
+    "--disable_analysis",
+    action="store_true",
+    default=False,
+    help="Disable the analysis module for ablation studies."
+  )
 
   args = parser.parse_args()
+  analysis_enabled = not args.disable_analysis
 
   # Load configurations
   CONFIG_PATH = os.path.abspath(f"../tasks/{args.task_id}/config/{args.dataset_id}/config_{args.run_id}.yaml")
@@ -328,24 +335,30 @@ if __name__ == "__main__":
     initial_repo.sota = sota_algo
     idea_repo_db.idea_repos[temp_id].append(initial_repo)
 
-  analysis_cfg = config.get("analysis", {})
-  analysis_dir = os.path.expanduser(
-    config['paths'].get('analysis_dir', os.path.join(logfile_dir, "analysis"))
-  )
-  os.makedirs(analysis_dir, exist_ok=True)
-  analysis_jsonl_path = os.path.join(analysis_dir, f"iteration_analysis_{timestamp}.jsonl")
-  analysis_report_path = os.path.join(analysis_dir, f"postmortem_{timestamp}.md")
-  analysis_manager = analysis_utils.AnalysisManager(
-    metric_direction=metric_dir,
-    jsonl_path=analysis_jsonl_path,
-    report_path=analysis_report_path,
-    task_eval_utils=task_eval_utils,
-    history_window=analysis_cfg.get("history_window", 60),
-    max_context_chars=analysis_cfg.get("max_context_chars", 2400),
-    recent_analysis_window=analysis_cfg.get("recent_analysis_window", 3),
-  )
-  logger.info(f"Iteration analysis will be written to: {analysis_jsonl_path}")
-  logger.info(f"Post-mortem report will be written to: {analysis_report_path}")
+  analysis_manager = None
+  analysis_jsonl_path = None
+  analysis_report_path = None
+  if analysis_enabled:
+    analysis_cfg = config.get("analysis", {})
+    analysis_dir = os.path.expanduser(
+      config['paths'].get('analysis_dir', os.path.join(logfile_dir, "analysis"))
+    )
+    os.makedirs(analysis_dir, exist_ok=True)
+    analysis_jsonl_path = os.path.join(analysis_dir, f"iteration_analysis_{timestamp}.jsonl")
+    analysis_report_path = os.path.join(analysis_dir, f"postmortem_{timestamp}.md")
+    analysis_manager = analysis_utils.AnalysisManager(
+      metric_direction=metric_dir,
+      jsonl_path=analysis_jsonl_path,
+      report_path=analysis_report_path,
+      task_eval_utils=task_eval_utils,
+      history_window=analysis_cfg.get("history_window", 60),
+      max_context_chars=analysis_cfg.get("max_context_chars", 2400),
+      recent_analysis_window=analysis_cfg.get("recent_analysis_window", 3),
+    )
+    logger.info(f"Iteration analysis will be written to: {analysis_jsonl_path}")
+    logger.info(f"Post-mortem report will be written to: {analysis_report_path}")
+  else:
+    logger.info("Analysis module disabled for this run.")
 
   logger.info(f"Backtrack frequency is {args.backtrack_freq}, Back track length is {args.backtrack_len}, alpha for power law is {args.power_alpha}")
 
@@ -365,10 +378,12 @@ if __name__ == "__main__":
         workflows_dir=workflows_dir,
         num_workers=args.num_workers,
         analysis_manager=analysis_manager,
+        enable_analysis=analysis_enabled,
     ))
     logger.info("Parallel evolution finished.")
-    logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
-    logger.info(f"Post-mortem report: {analysis_report_path}")
+    if analysis_enabled:
+      logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
+      logger.info(f"Post-mortem report: {analysis_report_path}")
     sys.exit(0)
 
   # --- Sequential mode (original) ---
@@ -426,9 +441,10 @@ if __name__ == "__main__":
     # elif args.backtrack_freq != -1 and (i+1) % args.backtrack_freq < args.backtrack_len and i >= args.backtrack_freq:
 
     new_idea_repo.sota = sota_algo
-    analysis_context = analysis_manager.build_reasoning_context(island_id)
-    if analysis_context:
-      transcript.append(ContentChunk(analysis_context, "system", tags=["analysis_context"]))
+    if analysis_manager is not None:
+      analysis_context = analysis_manager.build_reasoning_context(island_id)
+      if analysis_context:
+        transcript.append(ContentChunk(analysis_context, "system", tags=["analysis_context"]))
 
     per_island_count[island_id] += 1
     trigger_merge = False
@@ -533,18 +549,19 @@ if __name__ == "__main__":
       )
       continue
 
-    pre_eval_prompt = get_pre_eval_analysis_prompt(prompts, trial, transcript)
-    trial = workflow_utils.run_pre_eval_analysis(
-      llm_name=llm_name,
-      trial=trial,
-      transcript=transcript,
-      config=config,
-      analysis_prompt=pre_eval_prompt,
-      max_attempts=max(1, min(args.max_attempt, 3)),
-    )
-    transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
-    if not trial.analysis_success:
-      logger.warning(f"Iter {i}: Pre-eval analysis did not complete successfully. Proceeding to eval.")
+    if analysis_enabled:
+      pre_eval_prompt = get_pre_eval_analysis_prompt(prompts, trial, transcript)
+      trial = workflow_utils.run_pre_eval_analysis(
+        llm_name=llm_name,
+        trial=trial,
+        transcript=transcript,
+        config=config,
+        analysis_prompt=pre_eval_prompt,
+        max_attempts=max(1, min(args.max_attempt, 3)),
+      )
+      transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
+      if not trial.analysis_success:
+        logger.warning(f"Iter {i}: Pre-eval analysis did not complete successfully. Proceeding to eval.")
 
     # Run the evaluation process.
     trial = workflow_utils.edit_until_successful_eval(
@@ -647,5 +664,6 @@ if __name__ == "__main__":
 
   logger.info(f"All {max_iters} iterations finished.")
   logger.info(f"LLM Transcript log: {transcript_file}")
-  logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
-  logger.info(f"Post-mortem report: {analysis_report_path}")
+  if analysis_enabled:
+    logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
+    logger.info(f"Post-mortem report: {analysis_report_path}")

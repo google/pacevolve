@@ -103,6 +103,7 @@ def _run_island_iteration(
     max_attempt: int,
     baseline_id: int,
     transcript_file: str,
+    enable_analysis: bool = True,
     analysis_context: Optional[str] = None,
     pre_eval_analysis_prompt: Optional[str] = None,
 ) -> IterationResult:
@@ -197,43 +198,44 @@ def _run_island_iteration(
             return result
         result.compile_success = True
 
-        analysis_config = config
-        worker_harness_path = None
-        base_harness_path = config['paths'].get(
-            'analysis_harness_path',
-            os.path.join(os.path.dirname(workflow_utils.__file__), "pre_eval_analysis_harness.py")
-        )
-        if os.path.exists(base_harness_path):
-            worker_harness_path = os.path.join(
-                "/tmp",
-                f"pre_eval_analysis_harness_{os.getpid()}_{iteration}_{island_id}.py",
+        if enable_analysis:
+            analysis_config = config
+            worker_harness_path = None
+            base_harness_path = config['paths'].get(
+                'analysis_harness_path',
+                os.path.join(os.path.dirname(workflow_utils.__file__), "pre_eval_analysis_harness.py")
             )
-            try:
-                shutil.copyfile(base_harness_path, worker_harness_path)
-                analysis_config = deepcopy(config)
-                analysis_config.setdefault("paths", {})
-                analysis_config["paths"]["analysis_harness_path"] = worker_harness_path
-            except Exception as copy_error:
-                logger.warning(f"Failed to create worker-local pre-eval harness copy: {copy_error}")
+            if os.path.exists(base_harness_path):
+                worker_harness_path = os.path.join(
+                    "/tmp",
+                    f"pre_eval_analysis_harness_{os.getpid()}_{iteration}_{island_id}.py",
+                )
+                try:
+                    shutil.copyfile(base_harness_path, worker_harness_path)
+                    analysis_config = deepcopy(config)
+                    analysis_config.setdefault("paths", {})
+                    analysis_config["paths"]["analysis_harness_path"] = worker_harness_path
+                except Exception as copy_error:
+                    logger.warning(f"Failed to create worker-local pre-eval harness copy: {copy_error}")
 
-        trial = workflow_utils.run_pre_eval_analysis(
-            llm_name=llm_name,
-            trial=trial,
-            transcript=transcript,
-            config=analysis_config,
-            analysis_prompt=pre_eval_analysis_prompt,
-            max_attempts=max(1, min(max_attempt, 3)),
-        )
-        transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
-        result.analysis_success = trial.analysis_success
-        result.analysis_attempts = trial.analysis_attempts
-        result.analysis_metrics = trial.analysis_metrics
-        result.analysis_errors = trial.analysis_errors
-        if worker_harness_path and os.path.exists(worker_harness_path):
-            try:
-                os.remove(worker_harness_path)
-            except OSError:
-                pass
+            trial = workflow_utils.run_pre_eval_analysis(
+                llm_name=llm_name,
+                trial=trial,
+                transcript=transcript,
+                config=analysis_config,
+                analysis_prompt=pre_eval_analysis_prompt,
+                max_attempts=max(1, min(max_attempt, 3)),
+            )
+            transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
+            result.analysis_success = trial.analysis_success
+            result.analysis_attempts = trial.analysis_attempts
+            result.analysis_metrics = trial.analysis_metrics
+            result.analysis_errors = trial.analysis_errors
+            if worker_harness_path and os.path.exists(worker_harness_path):
+                try:
+                    os.remove(worker_harness_path)
+                except OSError:
+                    pass
 
         # Eval
         trial = workflow_utils.edit_until_successful_eval(
@@ -343,6 +345,7 @@ async def run_parallel_evolution(
     workflows_dir: str,
     num_workers: int = 4,
     analysis_manager: analysis_utils.AnalysisManager | None = None,
+    enable_analysis: bool = True,
 ):
     """Run multi-island evolution with true process-level parallelism.
 
@@ -368,7 +371,9 @@ async def run_parallel_evolution(
     import workflow_utils
     import llm_utils
 
-    pre_eval_analysis_prompt = getattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT", None)
+    pre_eval_analysis_prompt = None
+    if enable_analysis:
+        pre_eval_analysis_prompt = getattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT", None)
 
     completed = 0
     submitted = 0
@@ -452,6 +457,7 @@ async def run_parallel_evolution(
                 args.max_attempt,
                 baseline_id,
                 transcript_file,
+                enable_analysis,
                 analysis_context,
                 pre_eval_analysis_prompt,
             )
