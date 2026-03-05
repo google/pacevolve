@@ -1,0 +1,82 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Configuration for EPLB (Expert Parallelism Load Balancer) experiment workflow.
+
+llm:
+  name: "gemini-2.5-pro"
+  client_type: "gemini"
+  context_size: 120000
+  safety_margin: 600
+  max_try_count: 5
+
+experiment:
+  max_iters: 1000
+  task_id: "eplb"
+  max_hparam_iters: 0
+  sota_algo_name: "EPLB"
+  initial_baseline_id: -1
+  num_cpu_cores: 32
+
+paths:
+  data_path: "/workspace/pacevolve/tasks/eplb/data"
+  src_path: "/workspace/pacevolve/tasks/eplb/src"
+  eval_path: "/workspace/pacevolve/tasks/eplb/eval"
+  results_path: "/workspace/pacevolve/tasks/eplb/results"
+  target_file_path: "eplb_1.py"
+  log_dir: "/workspace/pacevolve/tasks/eplb/verbose"
+  transcript_dir: "/workspace/pacevolve/tasks/eplb/transcripts"
+
+compilation:
+  conda_env: "eplb"
+  recompile_timeout: 120
+  recompile_max_retries: 2
+  edit_start_tag: "RegexTagCustomPruningAlgorithmStart"
+  edit_end_tag: "RegexTagCustomPruningAlgorithmEnd"
+
+evaluation:
+  eval_timeout: 600
+  eval_max_retries: 1
+  eval_script_name: "evaluate_eplb.py"
+  baseline_diff_metric: "mean_variance"
+  max_parallel_evals: 5
+  target_score: 1.0
+  init_score: 0.0
+  metric_direction: "max"
+  eval_configs:
+    - dataset: "eplb"
+
+database:
+  num_islands: 1
+  tournament_size: 2
+  top_k: 4
+  max_queue_size: 100
+
+workflow_loops:
+  initial_compile:
+    max_attempts: 3
+    loop_tag: "initial_compile_loop"
+    summary_tag: "initial_compile_summary"
+  initial_eval:
+    max_attempts: 2
+    max_compile_attempts: 4
+    loop_tag: "initial_eval_loop"
+    summary_tag: "initial_eval_summary"
+    compile_loop_tag: "compile_within_eval_loop"
+    compile_summary_tag: "compile_summary"
+
+summarization:
+  context_lines_after_error: 3
+  max_lines_fallback: 40
+  max_summary_lines: 60

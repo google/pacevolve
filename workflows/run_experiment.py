@@ -258,7 +258,7 @@ if __name__ == "__main__":
     "--num_workers",
     type=int,
     required=False,
-    default=4,
+    default=8,
     help="Number of parallel worker processes (used with --parallel)."
   )
 
