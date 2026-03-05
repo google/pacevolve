@@ -292,7 +292,7 @@ def generate_completion(
     generation_config = {
         "temperature": llm_config.get("temperature", 1.0),
         "top_p": llm_config.get("top_p", 0.95),
-        "max_output_tokens": llm_config.get("max_output_tokens", 4096)
+        "max_output_tokens": llm_config.get("max_output_tokens", 32768)
     }
 
     # 5. Execution with Retry
