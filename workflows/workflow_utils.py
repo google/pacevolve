@@ -409,6 +409,21 @@ Requirements:
 """
 
 
+def _augment_pre_eval_analysis_prompt(base_prompt: str) -> str:
+  return (
+    f"{base_prompt.rstrip()}\n\n"
+    "Additional hard requirements:\n"
+    "- Analyze ONLY the provided `candidate_source` string.\n"
+    "- Do NOT read files, spawn subprocesses, call the network, or inspect the environment.\n"
+    "- Use Python stdlib only; do not import project modules or third-party packages.\n"
+    "- Return a plain `dict[str, float]` containing only numeric values.\n"
+    "- Prefix every metric key with `analysis_`.\n"
+    "- Keep the code deterministic, cheap, and robust to arbitrary Python source text.\n"
+    "- Output exactly one markdown Python code block.\n"
+    "- Define `analyze_candidate(candidate_source: str)` exactly once.\n"
+  )
+
+
 def run_pre_eval_analysis(
   llm_name,
   trial: AlgorithmTrial,
@@ -440,6 +455,7 @@ def run_pre_eval_analysis(
 
   if not analysis_prompt:
     analysis_prompt = _default_pre_eval_analysis_prompt(trial.algorithm_implementation)
+  analysis_prompt = _augment_pre_eval_analysis_prompt(analysis_prompt)
 
   generated_code = None
   for attempt in range(max_attempts):
@@ -447,9 +463,13 @@ def run_pre_eval_analysis(
     if attempt == 0:
       prompt_text = analysis_prompt
     else:
+      last_error = trial.analysis_errors[-1] if trial.analysis_errors else "unknown error"
       prompt_text = (
-        "Your previous analysis code was invalid or missing. "
-        "Please provide a valid Python code block that defines analyze_candidate(candidate_source: str)."
+        "Your previous analysis code was invalid, missing, or failed at runtime.\n"
+        f"Previous issue:\n{last_error}\n\n"
+        + _augment_pre_eval_analysis_prompt(
+          "Please provide a corrected Python analyzer."
+        )
       )
 
     transcript.append(ContentChunk(prompt_text, "user", tags=[loop_tag]))

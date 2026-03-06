@@ -199,6 +199,19 @@ def _run_island_iteration(
         result.compile_success = True
 
         if enable_analysis:
+            analysis_prompt = pre_eval_analysis_prompt
+            if analysis_prompt is None:
+                if hasattr(prompts, "construct_pre_eval_analysis_prompt"):
+                    try:
+                        analysis_prompt = prompts.construct_pre_eval_analysis_prompt(
+                            trial.algorithm_implementation,
+                            transcript,
+                        )
+                    except Exception:
+                        analysis_prompt = None
+                elif hasattr(prompts, "PRE_EVAL_ANALYSIS_PROMPT"):
+                    analysis_prompt = getattr(prompts, "PRE_EVAL_ANALYSIS_PROMPT")
+
             analysis_config = config
             worker_harness_path = None
             base_harness_path = config['paths'].get(
@@ -223,7 +236,7 @@ def _run_island_iteration(
                 trial=trial,
                 transcript=transcript,
                 config=analysis_config,
-                analysis_prompt=pre_eval_analysis_prompt,
+                analysis_prompt=analysis_prompt,
                 max_attempts=max(1, min(max_attempt, 3)),
             )
             transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
