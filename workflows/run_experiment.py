@@ -119,22 +119,6 @@ def record_iteration_analysis(
   )
   analysis_manager.record_iteration(record)
 
-
-def get_pre_eval_analysis_prompt(prompts_module, trial: AlgorithmTrial, transcript: Transcript) -> str | None:
-  """Returns task-specific pre-eval analysis prompt if available."""
-  if hasattr(prompts_module, "construct_pre_eval_analysis_prompt"):
-    try:
-      return prompts_module.construct_pre_eval_analysis_prompt(
-        trial.algorithm_implementation,
-        transcript,
-      )
-    except Exception:
-      return None
-  if hasattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT"):
-    return getattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT")
-  return None
-
-
 if __name__ == "__main__":
   # Set up logging.
   logger = logging.getLogger("controller")
@@ -550,7 +534,9 @@ if __name__ == "__main__":
       continue
 
     if analysis_enabled:
-      pre_eval_prompt = get_pre_eval_analysis_prompt(prompts, trial, transcript)
+      pre_eval_prompt = workflow_utils.resolve_pre_eval_analysis_prompt(
+        prompts, trial, transcript
+      )
       trial = workflow_utils.run_pre_eval_analysis(
         llm_name=llm_name,
         trial=trial,
