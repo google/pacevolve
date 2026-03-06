@@ -105,7 +105,6 @@ def _run_island_iteration(
     transcript_file: str,
     enable_analysis: bool = True,
     analysis_context: Optional[str] = None,
-    pre_eval_analysis_prompt: Optional[str] = None,
 ) -> IterationResult:
     """Worker function executed in a child process.
 
@@ -199,18 +198,11 @@ def _run_island_iteration(
         result.compile_success = True
 
         if enable_analysis:
-            analysis_prompt = pre_eval_analysis_prompt
-            if analysis_prompt is None:
-                if hasattr(prompts, "construct_pre_eval_analysis_prompt"):
-                    try:
-                        analysis_prompt = prompts.construct_pre_eval_analysis_prompt(
-                            trial.algorithm_implementation,
-                            transcript,
-                        )
-                    except Exception:
-                        analysis_prompt = None
-                elif hasattr(prompts, "PRE_EVAL_ANALYSIS_PROMPT"):
-                    analysis_prompt = getattr(prompts, "PRE_EVAL_ANALYSIS_PROMPT")
+            analysis_prompt = workflow_utils.resolve_pre_eval_analysis_prompt(
+                prompts,
+                trial,
+                transcript,
+            )
 
             analysis_config = config
             worker_harness_path = None
@@ -384,10 +376,6 @@ async def run_parallel_evolution(
     import workflow_utils
     import llm_utils
 
-    pre_eval_analysis_prompt = None
-    if enable_analysis:
-        pre_eval_analysis_prompt = getattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT", None)
-
     completed = 0
     submitted = 0
     next_island_rr = 0
@@ -472,7 +460,6 @@ async def run_parallel_evolution(
                 transcript_file,
                 enable_analysis,
                 analysis_context,
-                pre_eval_analysis_prompt,
             )
             pending[iter_id] = (fut, island_id_for_iter, is_last_backtrack, bt_repo_idx)
             submitted += 1

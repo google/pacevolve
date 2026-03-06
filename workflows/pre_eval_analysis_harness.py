@@ -27,35 +27,47 @@ import sys
 
 # RegexTagPreEvalAnalysisStart
 def analyze_candidate(candidate_source: str) -> dict[str, float]:
-    """Fallback analysis if LLM-generated analyzer is unavailable."""
-    lines = candidate_source.splitlines()
-    nonempty = [line for line in lines if line.strip()]
-    comment_lines = [
-        line for line in lines
-        if line.strip().startswith("#") or line.strip().startswith("//")
-    ]
+    """Fallback analysis using task-facing keyword and syntax proxies."""
+    lowered = candidate_source.lower()
 
-    func_count = 0
-    class_count = 0
+    def count_any(patterns: list[str]) -> float:
+        total = 0
+        for pattern in patterns:
+            total += len(re.findall(pattern, lowered))
+        return float(total)
+
+    call_count = 0
+    assign_count = 0
+    return_count = 0
     try:
         tree = ast.parse(candidate_source)
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                func_count += 1
-            elif isinstance(node, ast.ClassDef):
-                class_count += 1
+            if isinstance(node, ast.Call):
+                call_count += 1
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                assign_count += 1
+            elif isinstance(node, ast.Return):
+                return_count += 1
     except Exception:
         pass
 
     return {
-        "analysis_lines_total": float(len(lines)),
-        "analysis_lines_nonempty": float(len(nonempty)),
-        "analysis_comment_ratio": float(len(comment_lines)) / max(1.0, float(len(nonempty))),
-        "analysis_char_count": float(len(candidate_source)),
-        "analysis_function_count": float(func_count),
-        "analysis_class_count": float(class_count),
-        "analysis_loop_token_count": float(len(re.findall(r"\\b(for|while)\\b", candidate_source))),
-        "analysis_conditional_token_count": float(len(re.findall(r"\\b(if|elif|else)\\b", candidate_source))),
+        "analysis_loss_keyword_count": count_any([r"\bloss\b", r"\bobjective\b"]),
+        "analysis_reward_keyword_count": count_any([r"\breward\b", r"\breturns?\b"]),
+        "analysis_entropy_keyword_count": count_any([r"\bentropy\b"]),
+        "analysis_kl_keyword_count": count_any([r"\bkl\b", r"kl_div", r"kldiv"]),
+        "analysis_grad_norm_keyword_count": count_any([r"grad[_\- ]?norm", r"clip[_\- ]?grad"]),
+        "analysis_clip_keyword_count": count_any([r"\bclip\b", r"clamp"]),
+        "analysis_correction_keyword_count": count_any([r"\bcorrection\b", r"\bimportance\b", r"\bweight(s|ing)?\b", r"\btis\b"]),
+        "analysis_normalization_keyword_count": count_any([r"\bnorm(?:aliz\w*)?\b", r"\bstandardiz\w*\b", r"\bscale\w*\b"]),
+        "analysis_logprob_keyword_count": count_any([r"log[_\- ]?prob", r"logprob"]),
+        "analysis_advantage_keyword_count": count_any([r"\badvantage\b", r"\bgae\b"]),
+        "analysis_balance_keyword_count": count_any([r"\bbalance\w*\b", r"\bload\w*\b", r"\brebalance\w*\b"]),
+        "analysis_throughput_keyword_count": count_any([r"\bthroughput\b", r"\blatency\b", r"\bspeed\b", r"\bbandwidth\b"]),
+        "analysis_tensor_keyword_count": count_any([r"\btensor\b", r"\btorch\b", r"\bdevice\b", r"\bgpu\b"]),
+        "analysis_call_count": float(call_count),
+        "analysis_assignment_count": float(assign_count),
+        "analysis_return_count": float(return_count),
     }
 # RegexTagPreEvalAnalysisEnd
 

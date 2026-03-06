@@ -398,30 +398,55 @@ The candidate implementation to analyze is:
 Your job is to implement an analysis function:
 `def analyze_candidate(candidate_source: str) -> dict[str, float]:`
 
-Requirements:
-- Return ONLY numeric metrics (floats/ints) in the dict.
-- Metrics should be cheap to compute and deterministic.
-- Include at least 8 metrics that help reason about complexity/risk.
-- Prefix metric names with `analysis_`.
-- Do not read files or call network; analyze only `candidate_source`.
-- Output valid Python code in a markdown code block.
-- The code must define `analyze_candidate` exactly once.
+Design task-facing metrics rather than code-shape metrics.
+Infer likely task-relevant signals from the implementation.
+For example, in RL/RLVR-style code, prefer proxies related to correction terms,
+entropy, KL control, clipping, reward normalization, or gradient handling.
 """
 
 
-def _augment_pre_eval_analysis_prompt(base_prompt: str) -> str:
-  return (
-    f"{base_prompt.rstrip()}\n\n"
-    "Additional hard requirements:\n"
-    "- Analyze ONLY the provided `candidate_source` string.\n"
-    "- Do NOT read files, spawn subprocesses, call the network, or inspect the environment.\n"
-    "- Use Python stdlib only; do not import project modules or third-party packages.\n"
-    "- Return a plain `dict[str, float]` containing only numeric values.\n"
-    "- Prefix every metric key with `analysis_`.\n"
-    "- Keep the code deterministic, cheap, and robust to arbitrary Python source text.\n"
-    "- Output exactly one markdown Python code block.\n"
-    "- Define `analyze_candidate(candidate_source: str)` exactly once.\n"
-  )
+def _pre_eval_analysis_prompt_requirements() -> str:
+  return """
+Requirements:
+- Analyze ONLY the provided `candidate_source` string.
+- Do NOT read files, spawn subprocesses, call the network, or inspect the environment.
+- Use Python stdlib only; do not import project modules or third-party packages.
+- Return ONLY numeric metrics (floats/ints) in a plain `dict[str, float]`.
+- Include at least 8 metrics that help reason about task behavior, optimization dynamics, or objective-related tradeoffs.
+- Prefix every metric key with `analysis_`.
+- Keep the code deterministic, cheap, and robust to arbitrary Python source text.
+- Favor task-level or objective-level proxy metrics over code morphology metrics.
+- Avoid superficial metrics such as line counts, comment ratios, or raw branch counts unless they are clearly task-relevant.
+- If the task appears to be RL/RLVR-like, prioritize signals such as correction, entropy, KL, clipping, reward scaling, normalization, or gradient-control proxies.
+- Output exactly one markdown Python code block.
+- Define `analyze_candidate(candidate_source: str)` exactly once.
+""".strip()
+
+
+def _compose_pre_eval_analysis_prompt(base_prompt: str) -> str:
+  return f"{base_prompt.rstrip()}\n\n{_pre_eval_analysis_prompt_requirements()}"
+
+
+def resolve_pre_eval_analysis_prompt(
+  prompts_module,
+  trial: AlgorithmTrial,
+  transcript: Transcript,
+) -> str:
+  """Builds the final pre-eval analysis prompt used by all execution modes."""
+  base_prompt = None
+  if hasattr(prompts_module, "construct_pre_eval_analysis_prompt"):
+    try:
+      base_prompt = prompts_module.construct_pre_eval_analysis_prompt(
+        trial.algorithm_implementation,
+        transcript,
+      )
+    except Exception:
+      base_prompt = None
+  if not base_prompt and hasattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT"):
+    base_prompt = getattr(prompts_module, "PRE_EVAL_ANALYSIS_PROMPT")
+  if not base_prompt:
+    base_prompt = _default_pre_eval_analysis_prompt(trial.algorithm_implementation)
+  return _compose_pre_eval_analysis_prompt(base_prompt)
 
 
 def run_pre_eval_analysis(
@@ -454,8 +479,9 @@ def run_pre_eval_analysis(
   summary_tag = "pre_eval_analysis_summary"
 
   if not analysis_prompt:
-    analysis_prompt = _default_pre_eval_analysis_prompt(trial.algorithm_implementation)
-  analysis_prompt = _augment_pre_eval_analysis_prompt(analysis_prompt)
+    analysis_prompt = _compose_pre_eval_analysis_prompt(
+      _default_pre_eval_analysis_prompt(trial.algorithm_implementation)
+    )
 
   generated_code = None
   for attempt in range(max_attempts):
@@ -467,9 +493,7 @@ def run_pre_eval_analysis(
       prompt_text = (
         "Your previous analysis code was invalid, missing, or failed at runtime.\n"
         f"Previous issue:\n{last_error}\n\n"
-        + _augment_pre_eval_analysis_prompt(
-          "Please provide a corrected Python analyzer."
-        )
+        + _compose_pre_eval_analysis_prompt("Please provide a corrected Python analyzer.")
       )
 
     transcript.append(ContentChunk(prompt_text, "user", tags=[loop_tag]))
