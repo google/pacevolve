@@ -15,7 +15,7 @@
 # Configuration for EPLB (Expert Parallelism Load Balancer) experiment workflow.
 
 llm:
-  name: "gemini-2.5-pro"
+  name: "gemini-3.1-pro-preview"
   client_type: "gemini"
   context_size: 120000
   safety_margin: 600
@@ -30,13 +30,13 @@ experiment:
   num_cpu_cores: 32
 
 paths:
-  data_path: "/workspace/pacevolve/tasks/eplb/data"
-  src_path: "/workspace/pacevolve/tasks/eplb/src"
-  eval_path: "/workspace/pacevolve/tasks/eplb/eval"
-  results_path: "/workspace/pacevolve/tasks/eplb/results"
+  data_path: "~/pacevolve/tasks/eplb/data"
+  src_path: "~/pacevolve/tasks/eplb/src"
+  eval_path: "~/pacevolve/tasks/eplb/eval"
+  results_path: "~/pacevolve/tasks/eplb/results"
   target_file_path: "eplb_1.py"
-  log_dir: "/workspace/pacevolve/tasks/eplb/verbose"
-  transcript_dir: "/workspace/pacevolve/tasks/eplb/transcripts"
+  log_dir: "~/pacevolve/tasks/eplb/verbose"
+  transcript_dir: "~/pacevolve/tasks/eplb/transcripts"
 
 compilation:
   conda_env: "eplb"
@@ -58,7 +58,7 @@ evaluation:
     - dataset: "eplb"
 
 database:
-  num_islands: 1
+  num_islands: 8
   tournament_size: 2
   top_k: 4
   max_queue_size: 100
