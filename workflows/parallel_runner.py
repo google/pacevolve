@@ -19,6 +19,7 @@ from concurrent.futures import ProcessPoolExecutor, Future
 from copy import deepcopy
 from typing import Optional
 import analysis_utils
+import record_utils
 
 logger = logging.getLogger("controller")
 
@@ -147,6 +148,42 @@ def _run_island_iteration(
             transcript.append(ContentChunk(analysis_context, "system", tags=["analysis_context"]))
         trial = AlgorithmTrial()
 
+        def _persist_iteration_records(failure_reason: Optional[str]) -> None:
+            records_run_dir = config.get("paths", {}).get("records_run_dir")
+            if not records_run_dir:
+                return
+            try:
+                record_utils.write_iteration_records(
+                    records_run_dir=records_run_dir,
+                    iteration=iteration,
+                    island_id=island_id,
+                    transcript=transcript,
+                    candidate_code=trial.algorithm_implementation,
+                    eval_results=trial.eval_results,
+                    task_eval_utils=_worker_task_eval_utils,
+                    success=result.success,
+                    compile_success=trial.compile_success,
+                    eval_success=all(trial.eval_success) if trial.eval_success else False,
+                    compile_attempts=trial.compile_attempts,
+                    eval_attempts=trial.eval_attempts,
+                    analysis_attempts=trial.analysis_attempts,
+                    idea_id=trial.idea_id,
+                    eval_score=result.eval_score,
+                    summary_bullets=result.summary_bullets,
+                    compile_errors=trial.compile_errors,
+                    eval_failures=trial.eval_failures,
+                    analysis_errors=trial.analysis_errors,
+                    analysis_success=trial.analysis_success,
+                    analysis_metrics=trial.analysis_metrics,
+                    failure_reason=failure_reason,
+                    elapsed_seconds=result.elapsed,
+                    cuda_visible_devices=result.cuda_visible_devices,
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to persist records for iteration {iteration}, island {island_id}: {exc}"
+                )
+
         sota_algo = parent_code
         new_idea_repo = deepcopy(idea_repo_snapshot) if idea_repo_snapshot else None
 
@@ -160,6 +197,7 @@ def _run_island_iteration(
                 result.eval_failures = ["Failed to generate new hypothesis from scratch-pad stage."]
                 result.elapsed = time.time() - t0
                 result.updated_idea_repo = new_idea_repo
+                _persist_iteration_records("idea_generation_failed")
                 return result
 
             if use_idea_filter:
@@ -208,6 +246,7 @@ def _run_island_iteration(
             result.eval_failures = trial.eval_failures
             result.elapsed = time.time() - t0
             result.updated_idea_repo = new_idea_repo if use_idea_repo else None
+            _persist_iteration_records("compile_failed")
             return result
         result.compile_success = True
 
@@ -276,6 +315,7 @@ def _run_island_iteration(
             result.analysis_errors = trial.analysis_errors
             result.elapsed = time.time() - t0
             result.updated_idea_repo = new_idea_repo if use_idea_repo else None
+            _persist_iteration_records("eval_failed")
             return result
         result.eval_success = True
 
@@ -325,6 +365,7 @@ def _run_island_iteration(
                 idea.exp_history.extend(bullets)
                 idea.exp_count += 1
         result.updated_idea_repo = new_idea_repo
+        _persist_iteration_records(None if result.eval_score is not None else "score_parse_failed")
         return result
 
     except Exception as e:
@@ -346,6 +387,8 @@ def _run_island_iteration(
             result.updated_idea_repo = new_idea_repo if use_idea_repo else None
         except NameError:
             result.updated_idea_repo = None
+        if 'trial' in locals() and 'transcript' in locals():
+            _persist_iteration_records("worker_exception")
         return result
 
 

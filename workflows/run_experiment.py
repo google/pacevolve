@@ -31,7 +31,7 @@ project_root = os.path.dirname(workflows_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import llm_utils, workflow_utils, program_database, task_utils, idea_select_utils, analysis_utils
+import llm_utils, workflow_utils, program_database, task_utils, idea_select_utils, analysis_utils, record_utils
 import importlib
 
 # NOTE: LLM interactions are handled in llm_utils.py
@@ -307,7 +307,9 @@ if __name__ == "__main__":
   transcript_dir = os.path.expanduser(config['paths']['transcript_dir'])
   os.makedirs(transcript_dir, exist_ok=True)
   transcript_file = os.path.join(transcript_dir, f"transcript_{timestamp}.txt")
+  records_run_dir = record_utils.get_records_run_dir(config, timestamp)
   print("Transcript will be written to: ", transcript_file)
+  print("Iteration records will be written to: ", records_run_dir)
 
   # Main experiment loop.
   max_iters = config['experiment']['max_iters']
@@ -384,6 +386,7 @@ if __name__ == "__main__":
   logger.info(f"Backtrack frequency is {args.backtrack_freq}, Back track length is {args.backtrack_len}, alpha for power law is {args.power_alpha}")
   if island_gpu_map is not None:
     logger.info(f"Island GPU mapping enabled: {island_gpu_map}")
+  logger.info(f"Per-iteration island records will be written to: {records_run_dir}")
 
   # --- Parallel mode dispatch ---
   if args.parallel:
@@ -404,6 +407,7 @@ if __name__ == "__main__":
         enable_analysis=analysis_enabled,
     ))
     logger.info("Parallel evolution finished.")
+    logger.info(f"Per-iteration island records: {records_run_dir}")
     if analysis_enabled:
       logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
       logger.info(f"Post-mortem report: {analysis_report_path}")
@@ -413,6 +417,49 @@ if __name__ == "__main__":
   repo_idx_before_backtrack = 0
   backtrack_triggered_idx = -1
   island_id = 0
+
+  def persist_iteration_records(
+    iteration: int,
+    island_id: int,
+    transcript,
+    trial: AlgorithmTrial,
+    failure_reason: str | None,
+    eval_score: float | None = None,
+    summary_bullets: list[str] | None = None,
+    elapsed_seconds: float | None = None,
+  ) -> None:
+    try:
+      record_utils.write_iteration_records(
+        records_run_dir=records_run_dir,
+        iteration=iteration,
+        island_id=island_id,
+        transcript=transcript,
+        candidate_code=trial.algorithm_implementation,
+        eval_results=trial.eval_results,
+        task_eval_utils=task_eval_utils,
+        success=failure_reason is None,
+        compile_success=trial.compile_success,
+        eval_success=all(trial.eval_success) if trial.eval_success else False,
+        compile_attempts=trial.compile_attempts,
+        eval_attempts=trial.eval_attempts,
+        analysis_attempts=trial.analysis_attempts,
+        idea_id=trial.idea_id,
+        eval_score=eval_score,
+        summary_bullets=summary_bullets,
+        compile_errors=trial.compile_errors,
+        eval_failures=trial.eval_failures,
+        analysis_errors=trial.analysis_errors,
+        analysis_success=trial.analysis_success,
+        analysis_metrics=trial.analysis_metrics,
+        failure_reason=failure_reason,
+        elapsed_seconds=elapsed_seconds,
+        cuda_visible_devices=config.get("evaluation", {}).get("cuda_visible_devices"),
+      )
+    except Exception as exc:
+      logger.warning(
+        f"Failed to persist per-iteration records for iteration {iteration}, island {island_id}: {exc}"
+      )
+
   for i in range(max_iters):
     iter_start_time = time.time()
     last_bt_iter = False
@@ -507,6 +554,14 @@ if __name__ == "__main__":
           failure_reason="idea_generation_failed",
           elapsed_seconds=time.time() - iter_start_time,
         )
+        persist_iteration_records(
+          iteration=i,
+          island_id=island_id,
+          transcript=transcript,
+          trial=trial,
+          failure_reason="idea_generation_failed",
+          elapsed_seconds=time.time() - iter_start_time,
+        )
         continue
 
       # This is step 2: Idea selection.
@@ -578,6 +633,14 @@ if __name__ == "__main__":
         failure_reason="compile_failed",
         elapsed_seconds=time.time() - iter_start_time,
       )
+      persist_iteration_records(
+        iteration=i,
+        island_id=island_id,
+        transcript=transcript,
+        trial=trial,
+        failure_reason="compile_failed",
+        elapsed_seconds=time.time() - iter_start_time,
+      )
       continue
 
     if analysis_enabled:
@@ -617,6 +680,14 @@ if __name__ == "__main__":
         island_id=island_id,
         trial=trial,
         success=False,
+        failure_reason="eval_failed",
+        elapsed_seconds=time.time() - iter_start_time,
+      )
+      persist_iteration_records(
+        iteration=i,
+        island_id=island_id,
+        transcript=transcript,
+        trial=trial,
         failure_reason="eval_failed",
         elapsed_seconds=time.time() - iter_start_time,
       )
@@ -690,6 +761,16 @@ if __name__ == "__main__":
       eval_results=trial.eval_results,
       elapsed_seconds=time.time() - iter_start_time,
     )
+    persist_iteration_records(
+      iteration=i,
+      island_id=island_id,
+      transcript=transcript,
+      trial=trial,
+      failure_reason=failure_reason,
+      eval_score=eval_score,
+      summary_bullets=bullets,
+      elapsed_seconds=time.time() - iter_start_time,
+    )
 
     logger.info(f"Iter {i} summary:\n" + "\n".join(bullets))
 
@@ -697,6 +778,7 @@ if __name__ == "__main__":
 
   logger.info(f"All {max_iters} iterations finished.")
   logger.info(f"LLM Transcript log: {transcript_file}")
+  logger.info(f"Per-iteration island records: {records_run_dir}")
   if analysis_enabled:
     logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
     logger.info(f"Post-mortem report: {analysis_report_path}")

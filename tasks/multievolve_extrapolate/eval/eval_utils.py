@@ -64,6 +64,11 @@ def _build_command(config: dict, syntax_only: bool = False) -> str:
         f"--data_dir {shlex.quote(data_path)} "
         f"--benchmark_level {shlex.quote(str(benchmark_level))}"
     )
+    cuda_visible_devices = str(
+        config.get("evaluation", {}).get("cuda_visible_devices", "")
+    ).strip()
+    if cuda_visible_devices:
+        command = f"CUDA_VISIBLE_DEVICES={shlex.quote(cuda_visible_devices)} {command}"
     if syntax_only:
         command += " --syntax_only"
     return command
@@ -153,3 +158,34 @@ def parse_eval_results(eval_results):
         return parsed_results
 
     raise ValueError("Input must be a string or a list of strings.")
+
+
+def parse_eval_metrics(eval_results) -> dict[str, float]:
+    if isinstance(eval_results, str):
+        match = re.search(r"Candidate:\s*(\{.+\})", eval_results)
+        if not match:
+            return {}
+        try:
+            payload = json.loads(match.group(1))
+        except Exception as exc:
+            logger.error(f"Could not parse evaluation metrics: {exc}")
+            return {}
+        metrics = {}
+        for key, value in payload.items():
+            try:
+                metrics[str(key)] = float(value)
+            except Exception:
+                continue
+        return metrics
+
+    if isinstance(eval_results, list):
+        if len(eval_results) == 1:
+            return parse_eval_metrics(eval_results[0])
+        merged = {}
+        for idx, eval_result in enumerate(eval_results):
+            sub_metrics = parse_eval_metrics(eval_result)
+            for key, value in sub_metrics.items():
+                merged[f"{key}_ds{idx}"] = value
+        return merged
+
+    return {}
