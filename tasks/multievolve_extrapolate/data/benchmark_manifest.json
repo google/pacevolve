@@ -1,0 +1,176 @@
+{
+  "lite": [
+    {
+      "DMS_id": "F7YBW8_MESOW_Aakre_2015",
+      "DMS_filename": "F7YBW8_MESOW_Aakre_2015.csv",
+      "target_seq": "MANVEKMSVAVTPQQAAVMREAVEAGEYATASEIVREAVRDWLAKRELRHDDIRRLRQLWDEGKASGRPEPVDFDALRKEARQKLTEVPPNGR",
+      "seq_len": 93,
+      "source_organism": "Mesorhizobium opportunistum (strain LMG 24607 / HAMBI 3007 / WSM2075)",
+      "molecule_name": "Antitoxin ParD3",
+      "selection_assay": "fitness",
+      "coarse_selection_type": "OrganismalFitness"
+    },
+    {
+      "DMS_id": "Q65J43_BACLD_g4_Thomas_2025",
+      "DMS_filename": "Q65J43_BACLD_g4_Thomas_2025.csv",
+      "target_seq": "MIKKWAVHLLFSALVLLGLSGGAAYSPQHAEGAARYDDVLYFPASRYPETGAHISDAIKAGHADVCTIERSGADKRRQESLKGIPTKPGFDRDEWPMAMCEEGGKGASVRYVSSSDNRGAGSWVGNRLNGYADGTRILFIVQ",
+      "seq_len": 142,
+      "source_organism": "Bacillus licheniformis",
+      "molecule_name": "NucB",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "D7PM05_CLYGR_Somermeyer_2022",
+      "DMS_filename": "D7PM05_CLYGR_Somermeyer_2022.csv",
+      "target_seq": "MTALTEGAKLFEKEIPYITELEGDVEGMKFIIKGEGTGDATTGTIKAKYICTTGDLPVPWATILSSLSYGVFCFAKYPRHIADFFKSTQPDGYSQDRIISFDNDGQYDVKAKVTYENGTLYNRVTVKGTGFKSNGNILGMRVLYHSPPHAVYILPDRKNGGMKIEYNKAFDVMGGGHQMARHAQFNKPLGAWEEDYPLYHHLTVWTSFGKDPDDDETDHLTIVEVIKAVDLETYR",
+      "seq_len": 235,
+      "source_organism": "Clytia gregaria",
+      "molecule_name": "Green fluorescent protein cgreGFP",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "GFP_AEQVI_Sarkisyan_2016",
+      "DMS_filename": "GFP_AEQVI_Sarkisyan_2016.csv",
+      "target_seq": "MSKGEELFTGVVPILVELDGDVNGHKFSVSGEGEGDATYGKLTLKFICTTGKLPVPWPTLVTTLSYGVQCFSRYPDHMKQHDFFKSAMPEGYVQERTIFFKDDGNYKTRAEVKFEGDTLVNRIELKGIDFKEDGNILGHKLEYNYNSHNVYIMADKQKNGIKVNFKIRHNIEDGSVQLADHYQQNTPIGDGPVLLPDNHYLSTQSALSKDPNEKRDHMVLLEFVTAAGITHGMDELYK",
+      "seq_len": 238,
+      "source_organism": "Aequorea victoria",
+      "molecule_name": "GFP",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "VH14_Li_2023",
+      "DMS_filename": "VH14_Li_2023.csv",
+      "target_seq": "EVQLVETGGGLVQPGGSLRLSCAASGFTLNSYGISWVRQAPGKGPEWVSVIYSDGRRTFYGDSVKGRFTISRDTSTNTVYLQMNSLRVEDTAVYYCAKGRAAGTFDSWGQGTLVTVSSGGGGSGGGGSGGGGSDVVMTQSPESLAVSLGERATISCKSSQSVLYESRNKNSVAWYQQKAGQPPKLLIYWASTRESGVPDRFSGSGSGTDFTLTISSLQAEDAAVYYCQQYHRLPLSFGGGTKVEIK",
+      "seq_len": 246,
+      "source_organism": "Homo sapiens",
+      "molecule_name": "scFv",
+      "selection_assay": "Binding",
+      "coarse_selection_type": "Binding"
+    }
+  ],
+  "full": [
+    {
+      "DMS_id": "CAPSD_AAV2S_Sinai_2021",
+      "DMS_filename": "CAPSD_AAV2S_Sinai_2021.csv",
+      "target_seq": "MAADGYLPDWLEDTLSEGIRQWWKLKPGPPPPKPAERHKDDSRGLVLPGYKYLGPFNGLDKGEPVNEADAAALEHDKAYDRQLDSGDNPYLKYNHADAEFQERLKEDTSFGGNLGRAVFQAKKRVLEPLGLVEEPVKTAPGKKRPVEHSPVEPDSSSGTGKAGQQPARKRLNFGQTGDADSVPDPQPLGQPPAAPSGLGTNTMATGSGAPMADNNEGADGVGNSSGNWHCDSTWMGDRVITTSTRTWALPTYNNHLYKQISSQSGASNDNHYFGYSTPWGYFDFNRFHCHFSPRDWQRLINNNWGFRPKRLNFKLFNIQVKEVTQNDGTTTIANNLTSTVQVFTDSEYQLPYVLGSAHQGCLPPFPADVFMVPQYGYLTLNNGSQAVGRSSFYCLEYFPSQMLRTGNNFTFSYTFEDVPFHSSYAHSQSLDRLMNPLIDQYLYYLSRTNTPSGTTTQSRLQFSQAGASDIRDQSRNWLPGPCYRQQRVSKTSADNNNSEYSWTGATKYHLNGRDSLVNPGPAMASHKDDEEKFFPQSGVLIFGKQGSEKTNVDIEKVMITDEEEIRTTNPVATEQYGSVSTNLQRGNRQAATADVNTQGVLPGMVWQDRDVYLQGPIWAKIPHTDGHFHPSPLMGGFGLKHPPPQILIKNTPVPANPSTTFSAAKFASFITQYSTGQVSVEIEWELQKENSKRWNPEIQYTSNYNKSVNVDFTVDTNGVYSEPRPIGTRYLTRNL",
+      "seq_len": 735,
+      "source_organism": "Adeno-associated virus 2",
+      "molecule_name": "AAV",
+      "selection_assay": "viability for AAV capsid production",
+      "coarse_selection_type": "OrganismalFitness"
+    },
+    {
+      "DMS_id": "D7PM05_CLYGR_Somermeyer_2022",
+      "DMS_filename": "D7PM05_CLYGR_Somermeyer_2022.csv",
+      "target_seq": "MTALTEGAKLFEKEIPYITELEGDVEGMKFIIKGEGTGDATTGTIKAKYICTTGDLPVPWATILSSLSYGVFCFAKYPRHIADFFKSTQPDGYSQDRIISFDNDGQYDVKAKVTYENGTLYNRVTVKGTGFKSNGNILGMRVLYHSPPHAVYILPDRKNGGMKIEYNKAFDVMGGGHQMARHAQFNKPLGAWEEDYPLYHHLTVWTSFGKDPDDDETDHLTIVEVIKAVDLETYR",
+      "seq_len": 235,
+      "source_organism": "Clytia gregaria",
+      "molecule_name": "Green fluorescent protein cgreGFP",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "F7YBW8_MESOW_Aakre_2015",
+      "DMS_filename": "F7YBW8_MESOW_Aakre_2015.csv",
+      "target_seq": "MANVEKMSVAVTPQQAAVMREAVEAGEYATASEIVREAVRDWLAKRELRHDDIRRLRQLWDEGKASGRPEPVDFDALRKEARQKLTEVPPNGR",
+      "seq_len": 93,
+      "source_organism": "Mesorhizobium opportunistum (strain LMG 24607 / HAMBI 3007 / WSM2075)",
+      "molecule_name": "Antitoxin ParD3",
+      "selection_assay": "fitness",
+      "coarse_selection_type": "OrganismalFitness"
+    },
+    {
+      "DMS_id": "GFP_AEQVI_Sarkisyan_2016",
+      "DMS_filename": "GFP_AEQVI_Sarkisyan_2016.csv",
+      "target_seq": "MSKGEELFTGVVPILVELDGDVNGHKFSVSGEGEGDATYGKLTLKFICTTGKLPVPWPTLVTTLSYGVQCFSRYPDHMKQHDFFKSAMPEGYVQERTIFFKDDGNYKTRAEVKFEGDTLVNRIELKGIDFKEDGNILGHKLEYNYNSHNVYIMADKQKNGIKVNFKIRHNIEDGSVQLADHYQQNTPIGDGPVLLPDNHYLSTQSALSKDPNEKRDHMVLLEFVTAAGITHGMDELYK",
+      "seq_len": 238,
+      "source_organism": "Aequorea victoria",
+      "molecule_name": "GFP",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "HIS7_YEAST_Pokusaeva_2019",
+      "DMS_filename": "HIS7_YEAST_Pokusaeva_2019.csv",
+      "target_seq": "MTEQKALVKRITNETKIQIAISLKGGPLAIEHSIFPEKEAEAVAEQATQSQVINVHTGIGFLDHMIHALAKHSGWSLIVECIGDLHIDDHHTTEDCGIALGQAFKEALGAVRGVKRFGSGFAPLDEALSRAVVDLSNRPYAVVELGLQREKVGDLSCEMIPHFLESFAEASRITLHVDCLRGKNDHHRSESAFKALAVAIREATSPNGTNDVPSTKGVLM",
+      "seq_len": 220,
+      "source_organism": "Saccharomyces cerevisiae",
+      "molecule_name": "IGP dehydratase (HIS3)",
+      "selection_assay": "Growth",
+      "coarse_selection_type": "OrganismalFitness"
+    },
+    {
+      "DMS_id": "PHOT_CHLRE_Chen_2023",
+      "DMS_filename": "PHOT_CHLRE_Chen_2023.csv",
+      "target_seq": "AGLRHTFVVADATLPDCPLVYASEGFYAMTGYGPDEVLGHNARFLQGEGTDPKEVQKIRDAIKKGEACSVRLLNYRKDGTPFWNLLTVTPIKTPDGRVSKFVGVQVDVTSKTEGKALA",
+      "seq_len": 118,
+      "source_organism": "Chlamydomonas reinhardtii",
+      "molecule_name": "Phototropin",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "Q6WV13_9MAXI_Somermeyer_2022",
+      "DMS_filename": "Q6WV13_9MAXI_Somermeyer_2022.csv",
+      "target_seq": "MPAMKIECRITGTLNGVEFELVGGGEGTPEQGRMTNKMKSTKGALTFSPYLLSHVMGYGFYHFGTYPSGYENPFLHAINNGGYTNTRIEKYEDGGVLHVSFSYRYEAGRVIGDFKVVGTGFPEDSVIFTDKIIRSNATVEHLHPMGDNVLVGSFARTFSLRDGGYYSFVVDSHMHFKSAIHPSILQNGGPMFAFRRVEELHSNTELGIVEYQHAFKTPIAFA",
+      "seq_len": 222,
+      "source_organism": "Pontellina plumata",
+      "molecule_name": "Green fluorescent protein ppluGFP2",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "Q8WTC7_9CNID_Somermeyer_2022",
+      "DMS_filename": "Q8WTC7_9CNID_Somermeyer_2022.csv",
+      "target_seq": "MSKGEELFTGIVPVLIELDGDVHGHKFSVRGEGEGDADYGKLEIKFICTTGKLPVPWPTLVTTLSYGILCFARYPEHMKMNDFFKSAMPEGYIQERTIFFQDDGKYKTRGEVKFEGDTLVNRIELKGMDFKEDGNILGHKLEYNFNSHNVYIMPDKANNGLKVNFKIRHNIEGGGVQLADHYQTNVPLGDGPVLIPINHYLSCQTAISKDRNETRDHMVFLEFFSACGHTHGMDELYK",
+      "seq_len": 238,
+      "source_organism": "Aequorea macrodactyla",
+      "molecule_name": "Green fluorescent protein amacGFP",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "SPG1_STRSG_Wu_2016",
+      "DMS_filename": "SPG1_STRSG_Wu_2016.csv",
+      "target_seq": "MEKEKKVKYFLRKSAFGLASVSAAFLVGSTVFAVDSPIEDTPIIRNGGELTNLLGNSETTLALRNEESATADLTAAAVADTVAAAAAENAGAAAWEAAAAADALAKAKADALKEFNKYGVSDYYKNLINNAKTVEGIKDLQAQVVESAKKARISEATDGLSDFLKSQTPAEDTVKSIELAEAKVLANRELDKYGVSDYHKNLINNAKTVEGVKELIDEILAALPKTDQYKLILNGKTLKGETTTEAVDAATAEKVFKQYANDNGVDGEWTYDDATKTFTVTEKPEVIDASELTPAVTTYKLVINGKTLKGETTTKAVDAETAEKAFKQYANDNGVDGVWTYDDATKTFTVTEMVTEVPGDAPTEPEKPEASIPLVPLTPATPIAKDDAKKDDTKKEDAKKPEAKKDDAKKAETLPTTGEGSNPFFTAAALAVMAGAGALAVASKRKED",
+      "seq_len": 448,
+      "source_organism": "Streptococcus sp. group G",
+      "molecule_name": "GB1",
+      "selection_assay": "Binding (IgG)",
+      "coarse_selection_type": "Binding"
+    },
+    {
+      "DMS_id": "Q65J43_BACLD_g4_Thomas_2025",
+      "DMS_filename": "Q65J43_BACLD_g4_Thomas_2025.csv",
+      "target_seq": "MIKKWAVHLLFSALVLLGLSGGAAYSPQHAEGAARYDDVLYFPASRYPETGAHISDAIKAGHADVCTIERSGADKRRQESLKGIPTKPGFDRDEWPMAMCEEGGKGASVRYVSSSDNRGAGSWVGNRLNGYADGTRILFIVQ",
+      "seq_len": 142,
+      "source_organism": "Bacillus licheniformis",
+      "molecule_name": "NucB",
+      "selection_assay": "Fluorescence",
+      "coarse_selection_type": "Activity"
+    },
+    {
+      "DMS_id": "TRPB1_THEMA_Tm9D8_Johnston_2024",
+      "DMS_filename": "TRPB1_THEMA_Tm9D8_Johnston_2024.csv",
+      "target_seq": "MKGYFGPYGGQYVPEILMGALEELEAAYEGIMKDESFWKEFNDLLRDYAGRPTPLYFARRLSEKYGARVYLKREDLLHTGAHKINNAIGQVLLAKLMGKTRIIAETGAGQHGVATATAAALFGMECVIYMGEEDTIRQKLNVERMKLLGAKVVPVKSGSRTLKDAIDEALRDWITNLQTTYYVFGSVVGPHPYPIIVRNFQKVIGEETKKQIPEKEGRLPDYIVACVSGGSNAAGIFYPFIDSGVKLIGVEAGGEGLETGKHAASLLKGKIGYLHGSKTFVLQDDWGQVQVSHSVSAGLDYSGVGPEHAYWRETGKVLYDAVTDEEALDAFIELSRLEGIIPALESSHALAYLKKINIKGKVVVVNLSGRGDKDLESVLNHPYVRERIR",
+      "seq_len": 389,
+      "source_organism": "Escherichia coli",
+      "molecule_name": "TrpB",
+      "selection_assay": "Growth",
+      "coarse_selection_type": "Stability"
+    },
+    {
+      "DMS_id": "VH14_Li_2023",
+      "DMS_filename": "VH14_Li_2023.csv",
+      "target_seq": "EVQLVETGGGLVQPGGSLRLSCAASGFTLNSYGISWVRQAPGKGPEWVSVIYSDGRRTFYGDSVKGRFTISRDTSTNTVYLQMNSLRVEDTAVYYCAKGRAAGTFDSWGQGTLVTVSSGGGGSGGGGSGGGGSDVVMTQSPESLAVSLGERATISCKSSQSVLYESRNKNSVAWYQQKAGQPPKLLIYWASTRESGVPDRFSGSGSGTDFTLTISSLQAEDAAVYYCQQYHRLPLSFGGGTKVEIK",
+      "seq_len": 246,
+      "source_organism": "Homo sapiens",
+      "molecule_name": "scFv",
+      "selection_assay": "Binding",
+      "coarse_selection_type": "Binding"
+    }
+  ]
+}
