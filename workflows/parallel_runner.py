@@ -270,8 +270,15 @@ def _run_island_iteration(
             return result
         result.compile_success = True
 
+        # Eval
+        trial = workflow_utils.edit_until_successful_eval(
+            llm_name, trial, transcript, compile_config, eval_configs, config,
+            iteration + 1, baseline_id,
+            loop_config=config['workflow_loops']['initial_eval'],
+        )
+        transcript.hide_by_tag(tags=["initial_eval_loop"])
         if enable_analysis:
-            analysis_prompt = workflow_utils.resolve_pre_eval_analysis_prompt(
+            analysis_prompt = workflow_utils.resolve_post_eval_analysis_prompt(
                 prompts,
                 trial,
                 transcript,
@@ -281,12 +288,12 @@ def _run_island_iteration(
             worker_harness_path = None
             base_harness_path = config['paths'].get(
                 'analysis_harness_path',
-                os.path.join(os.path.dirname(workflow_utils.__file__), "pre_eval_analysis_harness.py")
+                os.path.join(os.path.dirname(workflow_utils.__file__), "post_eval_analysis_harness.py")
             )
             if os.path.exists(base_harness_path):
                 worker_harness_path = os.path.join(
                     "/tmp",
-                    f"pre_eval_analysis_harness_{os.getpid()}_{iteration}_{island_id}.py",
+                    f"post_eval_analysis_harness_{os.getpid()}_{iteration}_{island_id}.py",
                 )
                 try:
                     shutil.copyfile(base_harness_path, worker_harness_path)
@@ -294,9 +301,9 @@ def _run_island_iteration(
                     analysis_config.setdefault("paths", {})
                     analysis_config["paths"]["analysis_harness_path"] = worker_harness_path
                 except Exception as copy_error:
-                    logger.warning(f"Failed to create worker-local pre-eval harness copy: {copy_error}")
+                    logger.warning(f"Failed to create worker-local post-eval harness copy: {copy_error}")
 
-            trial = workflow_utils.run_pre_eval_analysis(
+            trial = workflow_utils.run_post_eval_analysis(
                 llm_name=llm_name,
                 trial=trial,
                 transcript=transcript,
@@ -304,7 +311,7 @@ def _run_island_iteration(
                 analysis_prompt=analysis_prompt,
                 max_attempts=max(1, min(max_attempt, 3)),
             )
-            transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
+            transcript.hide_by_tag(tags=["post_eval_analysis_loop"])
             result.analysis_success = trial.analysis_success
             result.analysis_attempts = trial.analysis_attempts
             result.analysis_metrics = trial.analysis_metrics
@@ -314,14 +321,6 @@ def _run_island_iteration(
                     os.remove(worker_harness_path)
                 except OSError:
                     pass
-
-        # Eval
-        trial = workflow_utils.edit_until_successful_eval(
-            llm_name, trial, transcript, compile_config, eval_configs, config,
-            iteration + 1, baseline_id,
-            loop_config=config['workflow_loops']['initial_eval'],
-        )
-        transcript.hide_by_tag(tags=["initial_eval_loop"])
         if not all(trial.eval_success):
             result.error = "Evaluation failed"
             result.eval_success = False

@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import json
+import tempfile
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -566,6 +567,218 @@ def run_pre_eval_analysis(
     transcript.append(
       ContentChunk(
         "Pre-eval analysis failed. Continue with evaluation using available metrics only.",
+        "system",
+        tags=[summary_tag],
+      )
+    )
+  return trial
+
+
+def _default_post_eval_analysis_prompt(candidate_code: str) -> str:
+  return f"""
+You are designing a lightweight post-evaluation analysis module for an evolutionary workflow.
+
+The candidate implementation to analyze is:
+```python
+{candidate_code}
+```
+
+Your job is to implement an analysis function:
+`def analyze_candidate(candidate_source: str, eval_output: str, artifact_info: dict[str, object]) -> dict[str, float]:`
+
+The analyzer will run after evaluation has finished. It will receive:
+- `candidate_source`: the evaluated source code
+- `eval_output`: the raw stdout/stderr from evaluation
+- `artifact_info`: structured metadata extracted from the produced artifact(s), logs, and parsed training trajectory
+
+Design metrics that help explain why the candidate worked or failed beyond the final score alone.
+Prioritize signals such as training stability, convergence shape, validation trajectory, wallclock usage, artifact budget pressure,
+quantization/compression behavior, model health, and checkpoint/artifact integrity.
+"""
+
+
+def _post_eval_analysis_prompt_requirements() -> str:
+  return """
+Requirements:
+- Analyze ONLY the provided `candidate_source`, `eval_output`, and `artifact_info` arguments.
+- Use Python stdlib only; do not import project modules or third-party packages in the generated analyzer.
+- Return ONLY numeric metrics (floats/ints) in a plain `dict[str, float]`.
+- Include at least 8 metrics that help explain why the proposal worked or did not work.
+- Prefix every metric key with `analysis_`.
+- Keep the code deterministic, cheap, and robust to missing artifacts or partial eval output.
+- Favor experiment-diagnostic metrics over superficial code-shape metrics.
+- Prioritize signals such as trajectory smoothness, training/validation improvement, runtime efficiency, quantization gap, artifact size headroom, memory pressure, and failure signatures.
+- Output exactly one markdown Python code block.
+- Define `analyze_candidate(candidate_source: str, eval_output: str, artifact_info: dict[str, object])` exactly once.
+""".strip()
+
+
+def _compose_post_eval_analysis_prompt(base_prompt: str) -> str:
+  return f"{base_prompt.rstrip()}\n\n{_post_eval_analysis_prompt_requirements()}"
+
+
+def resolve_post_eval_analysis_prompt(
+  prompts_module,
+  trial: AlgorithmTrial,
+  transcript: Transcript,
+) -> str:
+  """Builds the final post-eval analysis prompt used by all execution modes."""
+  base_prompt = None
+  if hasattr(prompts_module, "construct_post_eval_analysis_prompt"):
+    try:
+      base_prompt = prompts_module.construct_post_eval_analysis_prompt(
+        trial.algorithm_implementation,
+        trial.eval_results,
+        transcript,
+      )
+    except Exception:
+      base_prompt = None
+  if not base_prompt and hasattr(prompts_module, "POST_EVAL_ANALYSIS_PROMPT"):
+    base_prompt = getattr(prompts_module, "POST_EVAL_ANALYSIS_PROMPT")
+  if not base_prompt:
+    base_prompt = _default_post_eval_analysis_prompt(trial.algorithm_implementation)
+  return _compose_post_eval_analysis_prompt(base_prompt)
+
+
+def run_post_eval_analysis(
+  llm_name,
+  trial: AlgorithmTrial,
+  transcript: Transcript,
+  config: dict,
+  analysis_prompt: str | None = None,
+  max_attempts: int = 2,
+) -> AlgorithmTrial:
+  """Generates and runs a post-eval analyzer script for extra metrics."""
+  trial = copy.deepcopy(trial)
+
+  src_path = os.path.abspath(os.path.expanduser(config['paths']['src_path']))
+  candidate_path = os.path.join(src_path, config['paths']['target_file_path'])
+  harness_path = config['paths'].get(
+    'analysis_harness_path',
+    os.path.join(os.path.dirname(__file__), "post_eval_analysis_harness.py")
+  )
+  harness_path = os.path.abspath(os.path.expanduser(harness_path))
+
+  if not os.path.exists(harness_path):
+    message = f"Post-eval analysis harness not found at {harness_path}. Skipping."
+    logger.warning(message)
+    trial.analysis_success = False
+    trial.analysis_errors.append(message)
+    return trial
+
+  loop_tag = "post_eval_analysis_loop"
+  summary_tag = "post_eval_analysis_summary"
+
+  if not analysis_prompt:
+    analysis_prompt = _compose_post_eval_analysis_prompt(
+      _default_post_eval_analysis_prompt(trial.algorithm_implementation)
+    )
+
+  generated_code = None
+  for attempt in range(max_attempts):
+    trial.analysis_attempts += 1
+    if attempt == 0:
+      prompt_text = analysis_prompt
+    else:
+      last_error = trial.analysis_errors[-1] if trial.analysis_errors else "unknown error"
+      prompt_text = (
+        "Your previous post-eval analysis code was invalid, missing, or failed at runtime.\n"
+        f"Previous issue:\n{last_error}\n\n"
+        + _compose_post_eval_analysis_prompt("Please provide a corrected Python analyzer.")
+      )
+
+    transcript.append(ContentChunk(prompt_text, "user", tags=[loop_tag]))
+    llm_response_text = llm_utils.generate_completion(llm_name, transcript, config)
+    transcript.append(ContentChunk(llm_response_text, "model", tags=[loop_tag]))
+
+    code_blocks = llm_utils.extract_code_blocks(llm_response_text)
+    if not code_blocks:
+      trial.analysis_errors.append("No code block found in post-eval analysis response.")
+      continue
+    generated_code = code_blocks[0]
+
+    if "def analyze_candidate" not in generated_code:
+      trial.analysis_errors.append("Generated post-eval analysis code did not define analyze_candidate.")
+      generated_code = None
+      continue
+    break
+
+  if generated_code:
+    patch_config = copy.deepcopy(config)
+    if 'compilation' not in patch_config:
+      patch_config['compilation'] = {}
+    patch_config['compilation']['edit_start_tag'] = "RegexTagPostEvalAnalysisStart"
+    patch_config['compilation']['edit_end_tag'] = "RegexTagPostEvalAnalysisEnd"
+    try:
+      edit_library(
+        target_file_path=harness_path,
+        algorithm_implementation=generated_code,
+        config=patch_config,
+      )
+    except Exception as e:
+      trial.analysis_errors.append(f"Failed to write generated post-eval analyzer: {e}")
+
+  eval_output_text = "\n\n".join([text for text in trial.eval_results if text])
+  eval_output_path = None
+  process_result = None
+  try:
+    with tempfile.NamedTemporaryFile(
+      mode="w",
+      encoding="utf-8",
+      suffix=".eval.txt",
+      prefix="post_eval_analysis_",
+      delete=False,
+    ) as temp_file:
+      temp_file.write(eval_output_text)
+      eval_output_path = temp_file.name
+
+    conda_env = config['compilation'].get('conda_env')
+    command = (
+      f"python {harness_path} --candidate_path {candidate_path} "
+      f"--eval_output_path {eval_output_path} --src_path {src_path}"
+    )
+    if conda_env:
+      command = f"conda run -n {conda_env} {command}"
+
+    process_result = task_utils._call_shell_command(
+      command,
+      timeout=config.get('evaluation', {}).get('eval_timeout', 300),
+      max_retries=1,
+    )
+  finally:
+    if eval_output_path and os.path.exists(eval_output_path):
+      try:
+        os.remove(eval_output_path)
+      except OSError:
+        pass
+
+  if not process_result:
+    trial.analysis_success = False
+    trial.analysis_errors.append("Post-eval analysis process failed to complete.")
+    summary = "Post-eval analysis failed to complete."
+    transcript.append(ContentChunk(summary, "system", tags=[summary_tag]))
+    return trial
+
+  result_text = "\n".join([process_result.stdout.strip(), process_result.stderr.strip()]).strip()
+  trial.analysis_results = result_text
+  trial.analysis_success = (process_result.returncode == 0)
+  if not trial.analysis_success:
+    trial.analysis_errors.append(_truncate_error_message(result_text, max_chars=800))
+  trial.analysis_metrics = _extract_analysis_metrics(result_text)
+
+  if trial.analysis_success:
+    metrics_text = json.dumps(trial.analysis_metrics, sort_keys=True)
+    transcript.append(
+      ContentChunk(
+        f"Post-eval analysis metrics:\n```json\n{metrics_text}\n```",
+        "system",
+        tags=[summary_tag],
+      )
+    )
+  else:
+    transcript.append(
+      ContentChunk(
+        "Post-eval analysis failed. Continue using evaluation metrics only.",
         "system",
         tags=[summary_tag],
       )

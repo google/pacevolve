@@ -643,22 +643,6 @@ if __name__ == "__main__":
       )
       continue
 
-    if analysis_enabled:
-      pre_eval_prompt = workflow_utils.resolve_pre_eval_analysis_prompt(
-        prompts, trial, transcript
-      )
-      trial = workflow_utils.run_pre_eval_analysis(
-        llm_name=llm_name,
-        trial=trial,
-        transcript=transcript,
-        config=config,
-        analysis_prompt=pre_eval_prompt,
-        max_attempts=max(1, min(args.max_attempt, 3)),
-      )
-      transcript.hide_by_tag(tags=["pre_eval_analysis_loop"])
-      if not trial.analysis_success:
-        logger.warning(f"Iter {i}: Pre-eval analysis did not complete successfully. Proceeding to eval.")
-
     # Run the evaluation process.
     trial = workflow_utils.edit_until_successful_eval(
       llm_name, trial, transcript, compile_config, eval_configs, config,
@@ -666,6 +650,21 @@ if __name__ == "__main__":
       loop_config=config['workflow_loops']['initial_eval'],
     )
     transcript.hide_by_tag(tags=["initial_eval_loop"])
+    if analysis_enabled:
+      post_eval_prompt = workflow_utils.resolve_post_eval_analysis_prompt(
+        prompts, trial, transcript
+      )
+      trial = workflow_utils.run_post_eval_analysis(
+        llm_name=llm_name,
+        trial=trial,
+        transcript=transcript,
+        config=config,
+        analysis_prompt=post_eval_prompt,
+        max_attempts=max(1, min(args.max_attempt, 3)),
+      )
+      transcript.hide_by_tag(tags=["post_eval_analysis_loop"])
+      if not trial.analysis_success:
+        logger.warning(f"Iter {i}: Post-eval analysis did not complete successfully.")
     if not all(trial.eval_success):
       logger.error(f"Iter {i}: Candidate failed eval. Skipping to next iteration.")
       if last_bt_iter and args.merge_freq > -1:
