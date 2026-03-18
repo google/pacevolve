@@ -57,6 +57,7 @@ class IterationResult:
     analysis_attempts: int = 0
     analysis_metrics: dict = dataclasses.field(default_factory=dict)
     analysis_errors: list = dataclasses.field(default_factory=list)
+    cuda_visible_devices: Optional[str] = None
 
 
 def _worker_init(config_dict: dict, project_root: str, workflows_dir: str):
@@ -116,19 +117,32 @@ def _run_island_iteration(
 
     try:
         import llm_utils, workflow_utils
+        import task_utils
 
         Transcript = llm_utils.Transcript
         ContentChunk = llm_utils.ContentChunk
         AlgorithmTrial = workflow_utils.AlgorithmTrial
 
-        config = _worker_config
+        config = deepcopy(_worker_config)
         llm_name = _worker_llm_name
         prompts = _worker_prompts
         compile_config = _worker_compile_config
         eval_configs = _worker_eval_configs
 
+        island_cuda_visible_devices = task_utils.resolve_cuda_visible_devices_for_island(
+            config, island_id
+        )
+        if island_cuda_visible_devices is not None:
+            config.setdefault("evaluation", {})
+            config["evaluation"]["cuda_visible_devices"] = island_cuda_visible_devices
+            result.cuda_visible_devices = island_cuda_visible_devices
+
         transcript = Transcript(log_filename=transcript_file)
         transcript.log_debug_message(f"### Starting parallel iteration {iteration} on island {island_id}")
+        if island_cuda_visible_devices is not None:
+            transcript.log_debug_message(
+                f"### Island {island_id} assigned CUDA_VISIBLE_DEVICES={island_cuda_visible_devices}"
+            )
         if analysis_context:
             transcript.append(ContentChunk(analysis_context, "system", tags=["analysis_context"]))
         trial = AlgorithmTrial()
@@ -620,6 +634,10 @@ async def run_parallel_evolution(
                 logger.info(
                     f"Iteration {result.iteration} (island {island_id}) completed in "
                     f"{result.elapsed:.1f}s  score={result.eval_score}"
+                    + (
+                        f" gpu={result.cuda_visible_devices}"
+                        if result.cuda_visible_devices is not None else ""
+                    )
                 )
                 if result.summary_bullets:
                     logger.info("Summary: " + " | ".join(result.summary_bullets[:3]))
@@ -631,6 +649,10 @@ async def run_parallel_evolution(
                 logger.warning(
                     f"Iteration {result.iteration} (island {island_id}) failed: "
                     f"{result.error or 'unknown'}"
+                    + (
+                        f" gpu={result.cuda_visible_devices}"
+                        if result.cuda_visible_devices is not None else ""
+                    )
                 )
                 _record_iteration_analysis(result, failure_reason)
 

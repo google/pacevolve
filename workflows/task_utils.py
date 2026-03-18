@@ -18,7 +18,7 @@ import time
 import os
 import signal # For os.killpg and signal constants
 import logging 
-from typing import Tuple, Dict
+from typing import Any, Tuple, Dict
 import pickle
 import yaml
 import glob
@@ -128,6 +128,40 @@ def _call_shell_command(
         stderr=str(e),
       )
   return None
+
+
+def parse_island_cuda_visible_devices(raw_value: Any) -> list[str] | None:
+  """Normalizes island-to-GPU mappings from CLI/config input."""
+  if raw_value is None:
+    return None
+  if isinstance(raw_value, str):
+    values = [item.strip() for item in raw_value.split(",") if item.strip()]
+    return values or None
+  if isinstance(raw_value, (list, tuple)):
+    values = [str(item).strip() for item in raw_value if str(item).strip()]
+    return values or None
+  raise ValueError(
+    "Island GPU mapping must be a comma-separated string or a list of device ids."
+  )
+
+
+def resolve_cuda_visible_devices_for_island(
+  config: dict,
+  island_id: int,
+) -> str | None:
+  """Returns the CUDA-visible device string assigned to one island."""
+  evaluation_config = config.get("evaluation", {})
+  island_gpu_map = parse_island_cuda_visible_devices(
+    evaluation_config.get("island_cuda_visible_devices")
+  )
+  if island_gpu_map is None:
+    return None
+  if island_id < 0 or island_id >= len(island_gpu_map):
+    raise ValueError(
+      f"No GPU mapping configured for island {island_id}. "
+      f"Configured mappings: {island_gpu_map}"
+    )
+  return island_gpu_map[island_id]
 
 
 def _check_dominance(p1: Tuple[float, ...], p2: Tuple[float, ...]) -> int:

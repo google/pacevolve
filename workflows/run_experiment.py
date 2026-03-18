@@ -83,6 +83,35 @@ def load_configs(config_path) -> tuple[dict, CompilationConfig, list, str, objec
   return config, compile_config, eval_configs, llm_name
 
 
+def configure_island_gpu_mapping(config: dict, island_gpus_arg: str | None) -> list[str] | None:
+  """Configures a deterministic island -> GPU mapping for evaluation."""
+  evaluation_config = config.setdefault("evaluation", {})
+  raw_mapping = island_gpus_arg
+  if raw_mapping is None:
+    raw_mapping = evaluation_config.get("island_cuda_visible_devices")
+
+  island_gpu_map = task_utils.parse_island_cuda_visible_devices(raw_mapping)
+  if island_gpu_map is None:
+    return None
+
+  num_islands = config["database"]["num_islands"]
+  if len(island_gpu_map) < num_islands:
+    raise ValueError(
+      f"Configured {len(island_gpu_map)} island GPU ids for {num_islands} islands. "
+      "Please provide one GPU per island."
+    )
+
+  if len(island_gpu_map) > num_islands:
+    logger.warning(
+      f"Received {len(island_gpu_map)} island GPU ids for {num_islands} islands. "
+      f"Ignoring extras: {island_gpu_map[num_islands:]}"
+    )
+    island_gpu_map = island_gpu_map[:num_islands]
+
+  evaluation_config["island_cuda_visible_devices"] = island_gpu_map
+  return island_gpu_map
+
+
 def record_iteration_analysis(
     analysis_manager: analysis_utils.AnalysisManager | None,
     iteration: int,
@@ -251,6 +280,13 @@ if __name__ == "__main__":
     default=False,
     help="Disable the analysis module for ablation studies."
   )
+  parser.add_argument(
+    "--island_gpus",
+    type=str,
+    required=False,
+    default=None,
+    help="Comma-separated CUDA device ids to reserve per island, e.g. '0,1,2,3'.",
+  )
 
   args = parser.parse_args()
   analysis_enabled = not args.disable_analysis
@@ -258,6 +294,7 @@ if __name__ == "__main__":
   # Load configurations
   CONFIG_PATH = os.path.abspath(f"../tasks/{args.task_id}/config/{args.dataset_id}/config_{args.run_id}.yaml")
   config, compile_config, eval_configs, llm_name = load_configs(CONFIG_PATH)
+  island_gpu_map = configure_island_gpu_mapping(config, args.island_gpus)
 
   logfile_dir = os.path.expanduser(config['paths']['log_dir'])
   logfile_path = os.path.join(logfile_dir, f"controller_verbose_{timestamp}.log")
@@ -345,6 +382,8 @@ if __name__ == "__main__":
     logger.info("Analysis module disabled for this run.")
 
   logger.info(f"Backtrack frequency is {args.backtrack_freq}, Back track length is {args.backtrack_len}, alpha for power law is {args.power_alpha}")
+  if island_gpu_map is not None:
+    logger.info(f"Island GPU mapping enabled: {island_gpu_map}")
 
   # --- Parallel mode dispatch ---
   if args.parallel:
@@ -425,6 +464,14 @@ if __name__ == "__main__":
     # elif args.backtrack_freq != -1 and (i+1) % args.backtrack_freq < args.backtrack_len and i >= args.backtrack_freq:
 
     new_idea_repo.sota = sota_algo
+    island_cuda_visible_devices = task_utils.resolve_cuda_visible_devices_for_island(
+      config, island_id
+    )
+    if island_cuda_visible_devices is not None:
+      config["evaluation"]["cuda_visible_devices"] = island_cuda_visible_devices
+      logger.info(
+        f"Island {island_id} assigned CUDA_VISIBLE_DEVICES={island_cuda_visible_devices}"
+      )
     if analysis_manager is not None:
       analysis_context = analysis_manager.build_reasoning_context(island_id)
       if analysis_context:
