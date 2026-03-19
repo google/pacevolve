@@ -528,11 +528,7 @@ def run_pre_eval_analysis(
     except Exception as e:
       trial.analysis_errors.append(f"Failed to write generated pre-eval analyzer: {e}")
 
-  conda_env = config['compilation'].get('conda_env')
-  if conda_env:
-    command = f"conda run -n {conda_env} python {harness_path} --candidate_path {candidate_path}"
-  else:
-    command = f"python {harness_path} --candidate_path {candidate_path}"
+  command = f"python {harness_path} --candidate_path {candidate_path}"
 
   process_result = task_utils._call_shell_command(
     command,
@@ -732,13 +728,10 @@ def run_post_eval_analysis(
       temp_file.write(eval_output_text)
       eval_output_path = temp_file.name
 
-    conda_env = config['compilation'].get('conda_env')
     command = (
       f"python {harness_path} --candidate_path {candidate_path} "
       f"--eval_output_path {eval_output_path} --src_path {src_path}"
     )
-    if conda_env:
-      command = f"conda run -n {conda_env} {command}"
 
     process_result = task_utils._call_shell_command(
       command,
