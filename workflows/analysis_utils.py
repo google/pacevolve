@@ -202,9 +202,17 @@ class AnalysisManager:
     return delta, improved
 
   def record_iteration(self, record: IterationAnalysisRecord) -> None:
+    eval_metrics = dict(record.eval_metrics or {})
+    analysis_metrics = dict(record.analysis_metrics or {})
     metrics = self._extract_eval_metrics(record)
+    if not eval_metrics:
+      eval_metrics = {
+        key: value for key, value in metrics.items()
+        if not str(key).startswith("analysis_")
+      }
     if record.eval_score is not None:
       metrics.setdefault("primary_score", float(record.eval_score))
+      eval_metrics.setdefault("primary_score", float(record.eval_score))
 
     compile_labels = [_classify_failure(msg) for msg in record.compile_errors if msg]
     eval_labels = [_classify_failure(msg) for msg in record.eval_failures if msg]
@@ -237,7 +245,9 @@ class AnalysisManager:
       "analysis_success": record.analysis_success,
       "failure_reason": record.failure_reason,
       "elapsed_seconds": record.elapsed_seconds,
-      "eval_metrics": metrics,
+      "metrics": metrics,
+      "eval_metrics": eval_metrics,
+      "analysis_metrics": analysis_metrics,
       "summary_bullets": record.summary_bullets[:3],
       "compile_error_labels": compile_labels[:5],
       "eval_failure_labels": eval_labels[:5],
@@ -259,7 +269,9 @@ class AnalysisManager:
     iter_idx = int(payload["iteration"])
     analysis_state = "ok" if payload.get("analysis_success") else "fail"
 
-    analysis_metrics = payload.get("eval_metrics", {}) or {}
+    analysis_metrics = payload.get("analysis_metrics", {}) or {}
+    if not analysis_metrics:
+      analysis_metrics = payload.get("metrics", {}) or {}
     analysis_only_metrics = sorted(
       [(k, v) for k, v in analysis_metrics.items() if str(k).startswith("analysis_")],
       key=lambda kv: kv[0],

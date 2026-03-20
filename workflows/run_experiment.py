@@ -48,12 +48,47 @@ ProgramsDatabaseConfig = program_database.ProgramsDatabaseConfig
 IdeaRepo = idea_select_utils.IdeaRepo
 IdeaRepoDatabase = idea_select_utils.IdeaRepoDatabase
 
+def _rewrite_task_path(task_id: str, path_value: str):
+  if not isinstance(path_value, str) or not path_value:
+    return path_value
+
+  expanded = os.path.expanduser(path_value)
+  local_task_root = os.path.join(project_root, "tasks", task_id)
+  workspace_prefixes = [
+    os.path.join("/workspace", "pacevolve", "tasks", task_id),
+    os.path.join("/workspace", "pacevolve-analysis", "tasks", task_id),
+  ]
+
+  for prefix in workspace_prefixes:
+    if expanded == prefix or expanded.startswith(prefix + os.sep):
+      suffix = expanded[len(prefix):].lstrip(os.sep)
+      return os.path.join(local_task_root, suffix) if suffix else local_task_root
+  return path_value
+
+
+def _normalize_task_paths(config: dict) -> dict:
+  task_id = config['experiment']['task_id']
+  path_keys = [
+    "src_path",
+    "eval_path",
+    "results_path",
+    "log_dir",
+    "transcript_dir",
+    "records_dir",
+  ]
+  for key in path_keys:
+    if key in config.get("paths", {}):
+      config["paths"][key] = _rewrite_task_path(task_id, config["paths"][key])
+  return config
+
+
 def load_configs(config_path) -> tuple[dict, CompilationConfig, list, str, object]:
   with open(config_path, 'r') as f:
     config = yaml.safe_load(f)
 
   # Store the absolute path to the config file so it can be passed to other scripts.
   config['config_path'] = os.path.abspath(config_path)
+  config = _normalize_task_paths(config)
 
   task_id = config['experiment']['task_id']
   # llm_name is used by llm_utils to determine which model/API to call.
@@ -289,11 +324,11 @@ if __name__ == "__main__":
   )
 
   args = parser.parse_args()
-  analysis_enabled = not args.disable_analysis
 
   # Load configurations
   CONFIG_PATH = os.path.abspath(f"../tasks/{args.task_id}/config/{args.dataset_id}/config_{args.run_id}.yaml")
   config, compile_config, eval_configs, llm_name = load_configs(CONFIG_PATH)
+  analysis_enabled = bool(config.get("analysis", {}).get("enabled", True)) and not args.disable_analysis
   island_gpu_map = configure_island_gpu_mapping(config, args.island_gpus)
 
   logfile_dir = os.path.expanduser(config['paths']['log_dir'])
@@ -309,7 +344,7 @@ if __name__ == "__main__":
   transcript_file = os.path.join(transcript_dir, f"transcript_{timestamp}.txt")
   records_run_dir = record_utils.get_records_run_dir(config, timestamp)
   print("Transcript will be written to: ", transcript_file)
-  print("Iteration records will be written to: ", records_run_dir)
+  print("Per-island step records will be written to: ", records_run_dir)
 
   # Main experiment loop.
   max_iters = config['experiment']['max_iters']
@@ -386,7 +421,7 @@ if __name__ == "__main__":
   logger.info(f"Backtrack frequency is {args.backtrack_freq}, Back track length is {args.backtrack_len}, alpha for power law is {args.power_alpha}")
   if island_gpu_map is not None:
     logger.info(f"Island GPU mapping enabled: {island_gpu_map}")
-  logger.info(f"Per-iteration island records will be written to: {records_run_dir}")
+  logger.info(f"Per-island step records will be written to: {records_run_dir}")
 
   # --- Parallel mode dispatch ---
   if args.parallel:
@@ -407,7 +442,7 @@ if __name__ == "__main__":
         enable_analysis=analysis_enabled,
     ))
     logger.info("Parallel evolution finished.")
-    logger.info(f"Per-iteration island records: {records_run_dir}")
+    logger.info(f"Per-island step records: {records_run_dir}")
     if analysis_enabled:
       logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
       logger.info(f"Post-mortem report: {analysis_report_path}")
@@ -454,6 +489,9 @@ if __name__ == "__main__":
         failure_reason=failure_reason,
         elapsed_seconds=elapsed_seconds,
         cuda_visible_devices=config.get("evaluation", {}).get("cuda_visible_devices"),
+        analysis_mode=getattr(trial, "analysis_mode", "disabled"),
+        analysis_results=trial.analysis_results,
+        analysis_script=getattr(trial, "analysis_script", ""),
       )
     except Exception as exc:
       logger.warning(
@@ -651,17 +689,22 @@ if __name__ == "__main__":
     )
     transcript.hide_by_tag(tags=["initial_eval_loop"])
     if analysis_enabled:
-      post_eval_prompt = workflow_utils.resolve_post_eval_analysis_prompt(
-        prompts, trial, transcript
-      )
-      trial = workflow_utils.run_post_eval_analysis(
-        llm_name=llm_name,
-        trial=trial,
-        transcript=transcript,
-        config=config,
-        analysis_prompt=post_eval_prompt,
-        max_attempts=max(1, min(args.max_attempt, 3)),
-      )
+      try:
+        post_eval_prompt = workflow_utils.resolve_post_eval_analysis_prompt(
+          prompts, trial, transcript, config
+        )
+        trial = workflow_utils.run_post_eval_analysis(
+          llm_name=llm_name,
+          trial=trial,
+          transcript=transcript,
+          config=config,
+          analysis_prompt=post_eval_prompt,
+          max_attempts=max(1, min(args.max_attempt, 3)),
+        )
+      except Exception as exc:
+        logger.warning(f"Iter {i}: Post-eval analysis crashed: {exc}")
+        trial.analysis_success = False
+        trial.analysis_errors.append(f"Post-eval analysis crashed: {exc}")
       transcript.hide_by_tag(tags=["post_eval_analysis_loop"])
       if not trial.analysis_success:
         logger.warning(f"Iter {i}: Post-eval analysis did not complete successfully.")
@@ -777,7 +820,7 @@ if __name__ == "__main__":
 
   logger.info(f"All {max_iters} iterations finished.")
   logger.info(f"LLM Transcript log: {transcript_file}")
-  logger.info(f"Per-iteration island records: {records_run_dir}")
+  logger.info(f"Per-island step records: {records_run_dir}")
   if analysis_enabled:
     logger.info(f"Iteration analysis log: {analysis_jsonl_path}")
     logger.info(f"Post-mortem report: {analysis_report_path}")

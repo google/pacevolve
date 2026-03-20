@@ -59,6 +59,9 @@ class IterationResult:
     analysis_attempts: int = 0
     analysis_metrics: dict = dataclasses.field(default_factory=dict)
     analysis_errors: list = dataclasses.field(default_factory=list)
+    analysis_mode: str = "disabled"
+    analysis_results: str = ""
+    analysis_script: str = ""
     cuda_visible_devices: Optional[str] = None
 
 
@@ -198,6 +201,9 @@ def _run_island_iteration(
                     failure_reason=failure_reason,
                     elapsed_seconds=result.elapsed,
                     cuda_visible_devices=result.cuda_visible_devices,
+                    analysis_mode=result.analysis_mode,
+                    analysis_results=result.analysis_results,
+                    analysis_script=result.analysis_script,
                 )
             except Exception as exc:
                 logger.warning(
@@ -282,6 +288,7 @@ def _run_island_iteration(
                 prompts,
                 trial,
                 transcript,
+                config,
             )
 
             analysis_config = config
@@ -316,6 +323,9 @@ def _run_island_iteration(
             result.analysis_attempts = trial.analysis_attempts
             result.analysis_metrics = trial.analysis_metrics
             result.analysis_errors = trial.analysis_errors
+            result.analysis_mode = getattr(trial, "analysis_mode", "disabled")
+            result.analysis_results = trial.analysis_results
+            result.analysis_script = getattr(trial, "analysis_script", "")
             if worker_harness_path and os.path.exists(worker_harness_path):
                 try:
                     os.remove(worker_harness_path)
@@ -332,6 +342,9 @@ def _run_island_iteration(
             result.analysis_attempts = trial.analysis_attempts
             result.analysis_metrics = trial.analysis_metrics
             result.analysis_errors = trial.analysis_errors
+            result.analysis_mode = getattr(trial, "analysis_mode", "disabled")
+            result.analysis_results = trial.analysis_results
+            result.analysis_script = getattr(trial, "analysis_script", "")
             result.elapsed = time.time() - t0
             result.updated_idea_repo = new_idea_repo if use_idea_repo else None
             _persist_iteration_records("eval_failed")
@@ -376,6 +389,9 @@ def _run_island_iteration(
         result.analysis_attempts = trial.analysis_attempts
         result.analysis_metrics = trial.analysis_metrics
         result.analysis_errors = trial.analysis_errors
+        result.analysis_mode = getattr(trial, "analysis_mode", "disabled")
+        result.analysis_results = trial.analysis_results
+        result.analysis_script = getattr(trial, "analysis_script", "")
 
         # Update idea exp_history and attach for main process to append
         if use_idea_repo and new_idea_repo is not None and trial.idea_id != -1:
