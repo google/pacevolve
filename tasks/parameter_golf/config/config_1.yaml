@@ -1,7 +1,7 @@
 llm:
   name: "gemini-3.1-pro-preview"
   client_type: "gemini"
-  context_size: 120000
+  context_size: 500000
   safety_margin: 600
   max_try_count: 5
 
@@ -14,8 +14,8 @@ experiment:
   num_cpu_cores: 32
 
 paths:
-  data_path: "~/pacevolve/tasks/parameter-golf/data/datasets/fineweb10B_sp1024"
-  tokenizer_path: "~/pacevolve/tasks/parameter-golf/data/tokenizers/fineweb_1024_bpe.model"
+  data_path: "~/pacevolve/tasks/parameter_golf/data/datasets/fineweb10B_sp1024"
+  tokenizer_path: "~/pacevolve/tasks/parameter_golf/data/tokenizers/fineweb_1024_bpe.model"
   src_path: "~/pacevolve/tasks/parameter_golf/src"
   eval_path: "~/pacevolve/tasks/parameter_golf/eval"
   results_path: "~/pacevolve/tasks/parameter_golf/results"
