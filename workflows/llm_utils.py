@@ -83,6 +83,12 @@ class Transcript(MutableSequence):
             self._log_to_file(v)
         self._list.insert(i, v)
 
+
+@dataclasses.dataclass(frozen=True)
+class CodeBlock:
+    content: str
+    language: str | None = None
+
 # --- LLM Abstraction ---
 class LLMClient(ABC):
     """Abstract Base Class for Language Model Clients."""
@@ -316,10 +322,53 @@ def generate_completion(
     return output_text
 
 
-def extract_code_blocks(markdown_string: str) -> list[str]:
+def _parse_fence_language(info_string: str) -> str | None:
+    info_string = info_string.strip()
+    if not info_string:
+        return None
+
+    language = info_string.split(None, 1)[0].strip().lower()
+    if language.startswith("{.") and language.endswith("}"):
+        language = language[2:-1]
+    elif language.startswith("."):
+        language = language[1:]
+    return language or None
+
+
+def extract_fenced_code_blocks(markdown_string: str) -> list[CodeBlock]:
     if not markdown_string:
         return []
-    code_blocks = re.findall(
-        r'```(?:[a-zA-Z0-9_+\.-]+)?\n(.*?)\n```', markdown_string, re.DOTALL
-    )
-    return [block for block in code_blocks]
+
+    pattern = re.compile(r"```([^\n`]*)\n(.*?)\n```", re.DOTALL)
+    code_blocks = []
+    for match in pattern.finditer(markdown_string):
+        code_blocks.append(
+            CodeBlock(
+                content=match.group(2),
+                language=_parse_fence_language(match.group(1)),
+            )
+        )
+    return code_blocks
+
+
+def extract_code_blocks(
+    markdown_string: str,
+    preferred_languages: list[str] | None = None,
+) -> list[str]:
+    code_blocks = extract_fenced_code_blocks(markdown_string)
+    if not code_blocks:
+        return []
+
+    if preferred_languages:
+        preferred = {
+            language.strip().lower()
+            for language in preferred_languages
+            if language and language.strip()
+        }
+        matching_blocks = [
+            block.content for block in code_blocks if block.language in preferred
+        ]
+        if matching_blocks:
+            return matching_blocks
+
+    return [block.content for block in code_blocks]

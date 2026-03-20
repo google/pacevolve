@@ -40,6 +40,21 @@ CompletedProcess = task_utils.CompletedProcess
 
 NUM_CPU_CORES = 32
 
+_PREFERRED_FENCE_LANGUAGES_BY_EXTENSION = {
+  ".py": ["python", "py"],
+  ".c": ["c"],
+  ".cc": ["cc", "cpp", "c++", "cxx"],
+  ".cpp": ["cpp", "c++", "cc", "cxx"],
+  ".cu": ["cuda", "cu", "cpp", "c++"],
+  ".cuh": ["cuda", "cu", "cpp", "c++"],
+  ".cxx": ["cxx", "cpp", "c++", "cc"],
+  ".h": ["h", "c", "cpp", "c++"],
+  ".hpp": ["hpp", "cpp", "c++"],
+  ".java": ["java"],
+  ".js": ["javascript", "js"],
+  ".ts": ["typescript", "ts"],
+}
+
 
 @dataclasses.dataclass
 class AlgorithmTrial:
@@ -75,6 +90,13 @@ def _truncate_text(text: str, max_chars: int) -> str:
   if len(text) <= max_chars:
     return text
   return text[: max_chars - 3] + "..."
+
+
+def _preferred_fence_languages_for_file(file_path: str | None) -> list[str]:
+  if not file_path:
+    return []
+  extension = os.path.splitext(file_path)[1].lower()
+  return _PREFERRED_FENCE_LANGUAGES_BY_EXTENSION.get(extension, [])
 
 
 def _load_latest_analysis_artifact_payload(results_path: str | None):
@@ -259,7 +281,12 @@ def edit_until_compile(
         trial.idea_id = idea_id
 
 
-    code_blocks = llm_utils.extract_code_blocks(current_llm_response)
+    code_blocks = llm_utils.extract_code_blocks(
+      current_llm_response,
+      preferred_languages=_preferred_fence_languages_for_file(
+        compile_config.target_file_path
+      ),
+    )
 
     if not code_blocks:
       logger.warning("edit_until_compile: Code blocks not found in response.")
@@ -545,7 +572,10 @@ def run_pre_eval_analysis(
     llm_response_text = llm_utils.generate_completion(llm_name, transcript, config)
     transcript.append(ContentChunk(llm_response_text, "model", tags=[loop_tag]))
 
-    code_blocks = llm_utils.extract_code_blocks(llm_response_text)
+    code_blocks = llm_utils.extract_code_blocks(
+      llm_response_text,
+      preferred_languages=["python", "py"],
+    )
     if not code_blocks:
       trial.analysis_errors.append("No code block found in pre-eval analysis response.")
       continue
@@ -821,7 +851,10 @@ def run_post_eval_analysis(
       llm_response_text = llm_utils.generate_completion(llm_name, transcript, config)
       transcript.append(ContentChunk(llm_response_text, "model", tags=[loop_tag]))
 
-      code_blocks = llm_utils.extract_code_blocks(llm_response_text)
+      code_blocks = llm_utils.extract_code_blocks(
+        llm_response_text,
+        preferred_languages=["python", "py"],
+      )
       if not code_blocks:
         trial.analysis_errors.append("No code block found in post-eval analysis response.")
         continue
