@@ -25,7 +25,7 @@
 # Example:
 #   ./run.sh pgolf /workspace/data/fineweb10B_sp1024 /workspace/data/tokenizers/fineweb_1024_bpe.model 8 train
 
-if [ "$#" -ne 5 ]; then
+if [ "$#" -ne 4 ]; then
     echo "Usage: $0 <data_path> <tokenizer_path> <nproc> <mode>"
     echo "  mode: syntax | train"
     exit 1
