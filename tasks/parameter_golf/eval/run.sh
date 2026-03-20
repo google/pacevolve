@@ -31,10 +31,10 @@ if [ "$#" -ne 4 ]; then
     exit 1
 fi
 
-DATA_PATH=$2
-TOKENIZER_PATH=$3
-NPROC=$4
-MODE=$5
+DATA_PATH=$1
+TOKENIZER_PATH=$2
+NPROC=$3
+MODE=$4
 
 export CUDA_HOME=/usr/local/cuda-12.4
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
