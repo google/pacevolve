@@ -85,21 +85,42 @@ Parameter Golf is a challenge to train the best language model that fits in a 16
 """
 
 KNOWLEDGE_BASE = """
-# Knowledge base
-- The baseline uses a 9-layer, 512-dim transformer with GQA (8 heads, 4 KV heads) and a tiny vocab (1024 tokens with SentencePiece BPE). Tied embeddings save parameters.
-- Muon optimizer (Newton-Schulz orthogonalization) is used for matrix parameters and significantly improves over Adam alone.
-- relu^2 activation in the MLP is used instead of GELU/SwiGLU.
+# Old knowledge base: The following are lessons from a different setup, they may or may not help you here, worth a trying if you haven't. 
+NOTE THAT THESE ARE NOT LESSONS FROM THE CURRENT SETUP SO TAKE IT WITH A GRAINT OF THOUGHT:
+
 - U-net style skip connections (encoder-decoder split with learned skip weights) improve performance.
 - Per-block learned residual mixing (resid_mix) and per-block attention/MLP scaling improve training stability.
 - RoPE positional embeddings are applied to the full head dimension.
 - Logit softcapping (tanh(logits/cap)*cap) stabilizes training.
 - int8 quantization with per-row scales for 2D tensors and per-tensor scales for vectors preserves most model quality.
-- The wallclock cap uses adaptive warmdown: learning rates decay as the time limit approaches.
 - Depth recurrence (sharing weights across layers) could dramatically reduce parameter count while maintaining expressiveness.
 - Test-time compute (iterating through layers multiple times) is an unexplored direction that could improve quality without adding parameters.
-- Novel tokenizers or vocabulary sizes could change the BPB tradeoff.
-- Quantization-aware training could reduce the degradation from int8 conversion.
+
+# Knowledge base
+- The baseline uses a 9-layer, 512-dim transformer with GQA (8 heads, 4 KV heads) and a tiny vocab (1024 tokens with SentencePiece BPE). Tied embeddings save parameters.
+- Muon optimizer (Newton-Schulz orthogonalization) is used for matrix parameters and significantly improves over Adam alone.
+- relu^2 activation in the MLP is used instead of GELU/SwiGLU.
 - Low-rank factorizations of weight matrices can reduce parameter count with minimal quality loss.
+- i'm trying to figure out why relu squared is best and how to beat it. observed: squaring massively helps relu, barely helps silu, and destroys gated functions. squaring benefit depends on the base function (what you're squaring)
+- It's also not about zeroing negative values. `softplus²` has no zeros and outperforms `clamp(silu, 0)²` which does have zeros. `leaky_relu(0.01)²` (tiny leak, near-zero negatives) matches the clamped variants. The gap between relu² and the rest is mostly about the positive-side shape, not the zero/nonzero boundary.
+- on a short run, this is what I got by now (longer runs in progress to confirm): activations that preserve negative values (e.g. selu², leaky_relu(0.5)², abs²) outperform relu² baseline, which suppresses negatives. this suggests a pattern: less suppression of negative signals → better performance. current best result: abs² (1.4712), but multi-seed validation is still pending. key experiment: whether abs² remains best across seeds; if yes, it supports the idea that no activation (just squaring) is optimal.
+- squaring is the dominant mechanism, most of the performance gain comes from applying a square (·²), not from the specific activation used before it. relu → relu²: large improvement (≈ -0.049 BPB in early runs).
+Multiple squared variants cluster tightly at 2000 steps: leaky(0.5)²: 1.3218 abs²: 1.3238 relu²: 1.3264 spread ≈ 0.0046 total current evidence is strong for “squaring matters”, weak for why it matters. i'll post more research
+- the pre-squaring activation matters less than expected simpler functions before squaring perform better; complex nonlinearities degrade the benefit. abs² (no preprocessing) ≥ elu² ≥ softplus² ≥ clamped variants. silu² and gelu² barely improve over base versions. Gated activations (e.g., SwiGLU²) diverge or worsen significantly. more research necessary: confirmed up to 2000 out of 13k steps, gaps are shrinking over time ordering could change at longer horizons evidence supports “simplicity helps,” but magnitude is modest.
+- hard zeros are not beneficial (and may be slightly harmful) Conclusion: Zeroing negative values (ReLU behavior) is not a key advantage and likely slightly reduces performance. softplus² (no zeros) > clamp(silu, 0)² (has zeros) leaky_relu(0.5)² consistently outperforms relu² abs² (no suppression at all) performs among the best
+- to find better activation function inside MLP (for OpenAI's challenge) that beats the current baseline relu^2, it must:
+(1) Gradient should scale with activation size
+Neurons that output larger values should receive proportionally larger gradients, so they update more.
+(2) Do not squash the output range
+The activation should preserve differences in magnitude instead of compressing values into a narrow interval (like sigmoid). Large inputs should remain large, small inputs should remain small, and relative differences should stay visible. This avoids losing information.
+(3) Retain information from negative inputs
+Negative values should not be completely discarded. The activation should allow some negative signal to pass through or be transformed, rather than zeroing it out.
+leaky(0.5)² satisfies all three, it performs better but within noise, so i'm testing more
+i'm doing 500 step experiments (eliminate obviously bad) -> 2000 to 4000 (eliminate bad ones) -> 8000 to full 13,780 step training (my baseline, similar to OpenAI's), but i can use 1 GPU
+> 500 steps is reliable for screening out clearly bad ideas (relu³ diverging, squared gating blowing up - effects 10-40x noise). 
+It also reliably identifies that squaring helps (consistent across all base functions). 
+However, 500 steps is NOT reliable for ranking within the squared family - abs² leads at 500 but ties relu² by step 5000.
+Keep 500-step experiments for elimination rounds, but never trust fine-grained rankings from them. Any activation within ~0.01 BPB at 500 steps needs a 2000+ step run before drawing conclusions.
 """
 
 def construct_mutation_prompt(sota_algorithm, ablation_list):

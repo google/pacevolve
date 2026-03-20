@@ -14,14 +14,14 @@ experiment:
   num_cpu_cores: 32
 
 paths:
-  data_path: "/workspace/parameter-golf/data/datasets/fineweb10B_sp1024"
-  tokenizer_path: "/workspace/parameter-golf/data/tokenizers/fineweb_1024_bpe.model"
-  src_path: "/workspace/pacevolve/tasks/parameter_golf/src"
-  eval_path: "/workspace/pacevolve/tasks/parameter_golf/eval"
-  results_path: "/workspace/pacevolve/tasks/parameter_golf/results"
+  data_path: "~/pacevolve/tasks/parameter-golf/data/datasets/fineweb10B_sp1024"
+  tokenizer_path: "~/pacevolve/tasks/parameter-golf/data/tokenizers/fineweb_1024_bpe.model"
+  src_path: "~/pacevolve/tasks/parameter_golf/src"
+  eval_path: "~/pacevolve/tasks/parameter_golf/eval"
+  results_path: "~/pacevolve/tasks/parameter_golf/results"
   target_file_path: "train_gpt.py"
-  log_dir: "/workspace/pacevolve/tasks/parameter_golf/verbose"
-  transcript_dir: "/workspace/pacevolve/tasks/parameter_golf/transcripts"
+  log_dir: "~/pacevolve/tasks/parameter_golf/verbose"
+  transcript_dir: "~/pacevolve/tasks/parameter_golf/transcripts"
 
 compilation:
   recompile_timeout: 60
@@ -43,7 +43,7 @@ evaluation:
     - dataset: "fineweb_sp1024"
 
 database:
-  num_islands: 1
+  num_islands: 4
   tournament_size: 2
   top_k: 4
   max_queue_size: 100
