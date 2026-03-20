@@ -80,9 +80,9 @@ def _build_run_command(config: dict, mode: str = "train") -> str:
     run_script = os.path.join(eval_path, config["evaluation"]["eval_script_name"])
     data_path = os.path.expanduser(config["paths"]["data_path"])
     tokenizer_path = os.path.expanduser(config["paths"]["tokenizer_path"])
-    conda_env = config["compilation"]["conda_env"]
+    # conda_env = config["compilation"]["conda_env"]
     nproc = config["evaluation"].get("nproc_per_node", 8)
-    return f"{run_script} {conda_env} '{data_path}' '{tokenizer_path}' {nproc} {mode}"
+    return f"{run_script} '{data_path}' '{tokenizer_path}' {nproc} {mode}"
 
 
 def recompile_library(config: dict) -> CompletedProcess:

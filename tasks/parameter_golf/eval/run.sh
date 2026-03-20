@@ -26,12 +26,11 @@
 #   ./run.sh pgolf /workspace/data/fineweb10B_sp1024 /workspace/data/tokenizers/fineweb_1024_bpe.model 8 train
 
 if [ "$#" -ne 5 ]; then
-    echo "Usage: $0 <conda_env> <data_path> <tokenizer_path> <nproc> <mode>"
+    echo "Usage: $0 <data_path> <tokenizer_path> <nproc> <mode>"
     echo "  mode: syntax | train"
     exit 1
 fi
 
-CONDA_ENV_NAME=$1
 DATA_PATH=$2
 TOKENIZER_PATH=$3
 NPROC=$4
@@ -43,9 +42,6 @@ export PATH=$CUDA_HOME/bin:$PATH
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 TRAIN_SCRIPT="$SCRIPT_DIR/../src/train_gpt.py"
-
-source /opt/conda/etc/profile.d/conda.sh
-conda activate "$CONDA_ENV_NAME"
 
 if [ "$MODE" = "syntax" ]; then
     python -m py_compile "$TRAIN_SCRIPT"
