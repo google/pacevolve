@@ -66,6 +66,19 @@ pip install google-generativeai openai anthropic
 
 Each task contains a config.yaml file in the config subdirectory, you can change the backbone llm by changing the llm section in the config file.
 
+To let OpenAI or Claude do online research during generation, enable provider web search in the `llm` section. The rest of the workflow code can keep calling `llm_utils.generate_completion(...)` as before.
+
+```yaml
+llm:
+  name: "gpt-5"
+  client_type: "openai"
+  reasoning_effort: "low"
+  web_search:
+    enabled: true
+```
+
+For Claude, switch `name` / `client_type` and optionally set a tool version such as `web_search_20250305` or `web_search_20260209`. Domain filters are optional; omit them for broad search.
+
 
 ### 3. Running Your First Experiment
 To run the evolutionary process, execute the script with a specific task_id. This assumes you have a task configuration file located at ../tasks/<task_id>/config/.

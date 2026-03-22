@@ -7,21 +7,21 @@ llm:
 
 experiment:
   max_iters: 500
-  task_id: "parameter_golf"
+  task_id: "parameter_golf_triton"
   max_hparam_iters: 0
-  sota_algo_name: "PARAMETER_GOLF"
+  sota_algo_name: "PARAMETER_GOLF_TRITON"
   initial_baseline_id: -1
   num_cpu_cores: 32
 
 paths:
   data_path: "~/pacevolve/tasks/parameter_golf/data/datasets/fineweb10B_sp1024"
   tokenizer_path: "~/pacevolve/tasks/parameter_golf/data/tokenizers/fineweb_1024_bpe.model"
-  src_path: "~/pacevolve/tasks/parameter_golf/src"
-  eval_path: "~/pacevolve/tasks/parameter_golf/eval"
-  results_path: "~/pacevolve/tasks/parameter_golf/results"
+  src_path: "~/pacevolve/tasks/parameter_golf_triton/src"
+  eval_path: "~/pacevolve/tasks/parameter_golf_triton/eval"
+  results_path: "~/pacevolve/tasks/parameter_golf_triton/results"
   target_file_path: "train_gpt.py"
-  log_dir: "~/pacevolve/tasks/parameter_golf/verbose"
-  transcript_dir: "~/pacevolve/tasks/parameter_golf/transcripts"
+  log_dir: "~/pacevolve/tasks/parameter_golf_triton/verbose"
+  transcript_dir: "~/pacevolve/tasks/parameter_golf_triton/transcripts"
 
 compilation:
   recompile_timeout: 60

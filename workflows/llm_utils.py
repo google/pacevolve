@@ -105,6 +105,34 @@ class LLMClient(ABC):
     def generate(self, prompt: str, generation_config: Dict[str, Any]) -> str:
         pass
 
+
+def _web_search_config(generation_config: Dict[str, Any]) -> Dict[str, Any]:
+    config = generation_config.get("web_search", {})
+    return config if isinstance(config, dict) else {}
+
+
+def _web_search_enabled(generation_config: Dict[str, Any]) -> bool:
+    return bool(_web_search_config(generation_config).get("enabled"))
+
+
+def _extract_anthropic_text(response_content: Any) -> str:
+    text_chunks = []
+    for block in response_content or []:
+        block_type = getattr(block, "type", None)
+        if block_type == "text":
+            text = getattr(block, "text", None)
+            if text:
+                text_chunks.append(text)
+    return "".join(text_chunks).strip()
+
+
+def _serialize_cache_key(llm_name: str, llm_config: Dict[str, Any]) -> str:
+    try:
+        config_key = json.dumps(llm_config, sort_keys=True)
+    except TypeError:
+        config_key = repr(llm_config)
+    return f"{llm_name}:{config_key}"
+
 # --- Gemini Client ---
 try:
     import google.generativeai as genai
@@ -151,12 +179,53 @@ if OPENAI_AVAILABLE:
 
         def count_tokens(self, text: str) -> int:
             """Returns the number of tokens in a text string."""
-            encoding = tiktoken.encoding_for_model(self.model_name)
+            try:
+                encoding = tiktoken.encoding_for_model(self.model_name)
+            except KeyError:
+                encoding = tiktoken.get_encoding("cl100k_base")
             num_tokens = len(encoding.encode(text))
             return num_tokens
 
         def generate(self, prompt: str, generation_config: Dict[str, Any]) -> str:
-            # Convert generation_config to OpenAI format
+            if _web_search_enabled(generation_config):
+                web_search = _web_search_config(generation_config)
+                tool = {"type": web_search.get("tool_type", "web_search")}
+
+                allowed_domains = web_search.get("allowed_domains")
+                if allowed_domains:
+                    tool["filters"] = {"allowed_domains": allowed_domains}
+
+                if "external_web_access" in web_search:
+                    tool["external_web_access"] = web_search["external_web_access"]
+
+                user_location = web_search.get("user_location")
+                if user_location:
+                    tool["user_location"] = user_location
+
+                params = {
+                    "model": self.model_name,
+                    "input": prompt,
+                    "tools": [tool],
+                    "tool_choice": web_search.get("tool_choice", "auto"),
+                    "max_output_tokens": generation_config.get(
+                        "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS
+                    ),
+                }
+
+                include_sources = web_search.get("include_sources", True)
+                if include_sources:
+                    params["include"] = ["web_search_call.action.sources"]
+
+                reasoning_effort = generation_config.get(
+                    "reasoning_effort",
+                    web_search.get("reasoning_effort"),
+                )
+                if reasoning_effort:
+                    params["reasoning"] = {"effort": reasoning_effort}
+
+                response = self.client.responses.create(**params)
+                return getattr(response, "output_text", "") or ""
+
             params = {
                 "model": self.model_name,
                 "messages": [{"role": "user", "content": prompt}],
@@ -164,7 +233,7 @@ if OPENAI_AVAILABLE:
                 "top_p": generation_config.get("top_p", 0.95),
                 "max_tokens": generation_config.get(
                     "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS
-                )
+                ),
             }
             response = self.client.chat.completions.create(**params)
             return response.choices[0].message.content
@@ -222,15 +291,37 @@ if ANTHROPIC_AVAILABLE:
             return response.input_tokens
 
         def generate(self, prompt: str, generation_config: Dict[str, Any]) -> str:
-            response = self.client.messages.create(
-                model=self.model_name,
-                max_tokens=generation_config.get(
+            params = {
+                "model": self.model_name,
+                "max_tokens": generation_config.get(
                     "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS
                 ),
-                temperature=generation_config.get("temperature", 1.0),
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.content[0].text
+                "temperature": generation_config.get("temperature", 1.0),
+                "messages": [{"role": "user", "content": prompt}],
+            }
+
+            if _web_search_enabled(generation_config):
+                web_search = _web_search_config(generation_config)
+                tool = {
+                    "type": web_search.get("tool_type", "web_search_20250305"),
+                    "name": "web_search",
+                }
+
+                for key in (
+                    "max_uses",
+                    "allowed_domains",
+                    "blocked_domains",
+                    "user_location",
+                    "allowed_callers",
+                ):
+                    value = web_search.get(key)
+                    if value:
+                        tool[key] = value
+
+                params["tools"] = [tool]
+
+            response = self.client.messages.create(**params)
+            return _extract_anthropic_text(response.content)
 
 # --- Client Factory and Cache ---
 
@@ -238,10 +329,11 @@ _CLIENT_CACHE: Dict[str, LLMClient] = {}
 
 def get_llm_client(llm_name: str, config: Dict[str, Any]) -> LLMClient:
     """Singleton pattern to retrieve or create LLM clients."""
-    if llm_name in _CLIENT_CACHE:
-        return _CLIENT_CACHE[llm_name]
-
     llm_config = config.get('llm', {})
+    cache_key = _serialize_cache_key(llm_name, llm_config)
+    if cache_key in _CLIENT_CACHE:
+        return _CLIENT_CACHE[cache_key]
+
     client_type = llm_config.get('client_type', 'gemini')
     
     # Override client_type based on model name if user just switched the name
@@ -262,7 +354,7 @@ def get_llm_client(llm_name: str, config: Dict[str, Any]) -> LLMClient:
     else:
         raise ValueError(f"Unsupported or missing client type: {client_type}")
 
-    _CLIENT_CACHE[llm_name] = client
+    _CLIENT_CACHE[cache_key] = client
     logger.info(f"Initialized LLM Client: {client_type} for model {llm_name}")
     return client
 
@@ -305,6 +397,8 @@ def generate_completion(
     generation_config = {
         "temperature": llm_config.get("temperature", 1.0),
         "top_p": llm_config.get("top_p", 0.95),
+        "reasoning_effort": llm_config.get("reasoning_effort"),
+        "web_search": llm_config.get("web_search", {}),
         "max_output_tokens": llm_config.get(
             "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS
         )

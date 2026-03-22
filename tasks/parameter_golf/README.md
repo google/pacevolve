@@ -13,6 +13,12 @@ The entire training script (`src/train_gpt.py`) between `RegexTagCustomPruningAl
 - Tokenizer configuration (vocabulary size)
 - Any other aspect of training
 
+## Evaluation Guardrails
+
+Candidates must preserve the protected evaluation semantics from `src/train_gpt_ref.py`.
+That includes shard ordering, validation token loading, BPB computation, quantized round-trip evaluation, and the meaning of the final metric reporting lines.
+PACEvolve now runs an additional model-side review step before compile/eval and gives failed candidates up to two regeneration attempts to avoid reward hacking.
+
 ## Setup
 
 ### Data

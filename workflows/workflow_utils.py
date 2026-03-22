@@ -76,6 +76,14 @@ class AlgorithmTrial:
   analysis_script: str = ""
 
 
+@dataclasses.dataclass(frozen=True)
+class CandidateValidationHook:
+  prompt_builder: object
+  reference_file_label: str
+  reference_code: str
+  max_retries: int = 2
+
+
 def _truncate_error_message(message: str, max_chars: int = 1200) -> str:
   if message is None:
     return ""
@@ -97,6 +105,132 @@ def _preferred_fence_languages_for_file(file_path: str | None) -> list[str]:
     return []
   extension = os.path.splitext(file_path)[1].lower()
   return _PREFERRED_FENCE_LANGUAGES_BY_EXTENSION.get(extension, [])
+
+
+def _load_task_prompts_module(config: dict):
+  task_id = config.get("experiment", {}).get("task_id")
+  if not task_id:
+    return None
+
+  prompt_filename = config.get("experiment", {}).get("prompts_file", "prompts")
+  try:
+    return importlib.import_module(f"tasks.{task_id}.config.{prompt_filename}")
+  except Exception:
+    return None
+
+
+def _resolve_candidate_validation_hook(
+  config: dict,
+) -> CandidateValidationHook | None:
+  prompts_module = _load_task_prompts_module(config)
+  if prompts_module is None:
+    return None
+
+  prompt_builder = getattr(
+    prompts_module,
+    "construct_candidate_validation_prompt",
+    None,
+  )
+  reference_file_label = getattr(
+    prompts_module,
+    "CANDIDATE_VALIDATION_REFERENCE_FILE",
+    None,
+  )
+  if not callable(prompt_builder) or not reference_file_label:
+    return None
+
+  src_path = os.path.abspath(os.path.expanduser(config["paths"]["src_path"]))
+  reference_path = reference_file_label
+  if not os.path.isabs(reference_path):
+    reference_path = os.path.join(src_path, reference_path)
+  if not os.path.exists(reference_path):
+    logger.warning(
+      "Candidate validation reference file not found at %s. Skipping validation.",
+      reference_path,
+    )
+    return None
+
+  try:
+    with open(reference_path, "r", encoding="utf-8") as handle:
+      reference_code = handle.read()
+  except Exception as exc:
+    logger.warning(
+      "Failed to read candidate validation reference file %s: %s",
+      reference_path,
+      exc,
+    )
+    return None
+
+  candidate_validation_config = config.get("candidate_validation", {})
+  max_retries = int(
+    candidate_validation_config.get(
+      "max_retries",
+      getattr(prompts_module, "CANDIDATE_VALIDATION_MAX_RETRIES", 2),
+    )
+  )
+  return CandidateValidationHook(
+    prompt_builder=prompt_builder,
+    reference_file_label=os.path.basename(reference_path),
+    reference_code=reference_code,
+    max_retries=max(0, max_retries),
+  )
+
+
+def _parse_candidate_validation_response(
+  response_text: str | None,
+) -> tuple[bool | None, str]:
+  feedback = (response_text or "").strip()
+  if not feedback:
+    return None, "Candidate validation returned an empty response."
+
+  verdict_match = re.search(r"Verdict:\s*(PASS|FAIL)\b", feedback, re.IGNORECASE)
+  if not verdict_match:
+    first_line = feedback.splitlines()[0].strip()
+    if first_line.upper() in {"PASS", "FAIL"}:
+      return first_line.upper() == "PASS", feedback
+    return None, feedback
+
+  verdict = verdict_match.group(1).upper() == "PASS"
+  return verdict, feedback
+
+
+def _run_candidate_validation(
+  llm_name,
+  candidate_code: str,
+  transcript: Transcript,
+  config: dict,
+  hook: CandidateValidationHook,
+) -> tuple[bool, str]:
+  log_filename = getattr(transcript, "_log_filename", None)
+  validation_transcript = Transcript(log_filename=log_filename)
+  validation_prompt = hook.prompt_builder(candidate_code, hook.reference_code)
+  validation_transcript.append(
+    ContentChunk(
+      validation_prompt,
+      "user",
+      tags=["candidate_validation_prompt"],
+    )
+  )
+  validation_response = llm_utils.generate_completion(
+    llm_name,
+    validation_transcript,
+    config,
+  )
+  validation_transcript.append(
+    ContentChunk(
+      validation_response or "",
+      "model",
+      tags=["candidate_validation_response"],
+    )
+  )
+  verdict, feedback = _parse_candidate_validation_response(validation_response)
+  if verdict is None:
+    return False, (
+      "The candidate validation reviewer did not return a parseable "
+      "`Verdict: PASS` or `Verdict: FAIL` response.\n\n"
+      f"{feedback}"
+    )
+  return verdict, feedback
 
 
 def _load_latest_analysis_artifact_payload(results_path: str | None):
@@ -230,6 +364,8 @@ def edit_until_compile(
   recovery_prompt = None
   trial = copy.deepcopy(trial)  # Do not modify the original trial object.
   existing_compile_attempts = trial.compile_attempts
+  candidate_validation_hook = _resolve_candidate_validation_hook(config)
+  validation_failures = 0
   while num_attempts < max_compile_attempts:
     num_attempts += 1
     logger.info(f"edit_until_compile: {num_attempts}/{max_compile_attempts}")
@@ -297,7 +433,48 @@ def edit_until_compile(
       )
       continue
 
-    trial.algorithm_implementation = code_blocks[0]  # Use the first block.
+    candidate_code = code_blocks[0]
+
+    if candidate_validation_hook is not None:
+      validation_passed, validation_feedback = _run_candidate_validation(
+        llm_name,
+        candidate_code,
+        transcript,
+        config,
+        candidate_validation_hook,
+      )
+      if not validation_passed:
+        validation_failures += 1
+        feedback_excerpt = _truncate_error_message(
+          validation_feedback,
+          max_chars=1500,
+        )
+        logger.warning(
+          "edit_until_compile: Candidate validation failed (%s/%s).",
+          validation_failures,
+          candidate_validation_hook.max_retries + 1,
+        )
+        trial.compile_errors.append(
+          "Candidate validation failed against protected reference "
+          f"{candidate_validation_hook.reference_file_label}:\n"
+          f"{feedback_excerpt}"
+        )
+        if validation_failures > candidate_validation_hook.max_retries:
+          recovery_prompt = None
+          break
+        recovery_prompt = (
+          "Your candidate failed the protected evaluation review against "
+          f"`{candidate_validation_hook.reference_file_label}`. Regenerate the "
+          "entire code block while preserving the exact data ordering, BPB "
+          "evaluation semantics, quantized round-trip evaluation semantics, "
+          "and final metric reporting behavior from the reference.\n\n"
+          "Validation feedback:\n"
+          f"{feedback_excerpt}"
+        )
+        code_was_revised = True
+        continue
+
+    trial.algorithm_implementation = candidate_code
     trial, recovery_prompt, compile_error_summary = attempt_compile(trial, compile_config, config)
     if compile_error_summary:
       trial.compile_errors.append(_truncate_error_message(compile_error_summary))
